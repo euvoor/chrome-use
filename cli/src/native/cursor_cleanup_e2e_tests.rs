@@ -7,7 +7,7 @@ async fn e2e_cursor_cleanup_removes_real_dom_and_page_global() {
     let module = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../extensions/ab-connect/cursor-overlay.js");
     let driver = format!(
-        "import {{cursorOverlayExpression, REMOVE_CURSOR_EXPRESSION}} from {}; console.log(JSON.stringify({{draw:cursorOverlayExpression(30,40,true),remove:REMOVE_CURSOR_EXPRESSION}}));",
+        "import {{pathToFileURL}} from 'node:url'; const {{cursorOverlayExpression, REMOVE_CURSOR_EXPRESSION}} = await import(pathToFileURL({})); console.log(JSON.stringify({{draw:cursorOverlayExpression(30,40,true),remove:REMOVE_CURSOR_EXPRESSION}}));",
         serde_json::to_string(&module.to_str().unwrap()).unwrap()
     );
     let output = std::process::Command::new("node")
