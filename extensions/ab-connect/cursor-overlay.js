@@ -86,7 +86,11 @@ export function createCursorOverlay({ evaluate, warn = console.warn }) {
         return c.host.style.display === ${JSON.stringify(show ? '' : 'none')};
       })()`);
     },
-    attached(tabId) { return enabled ? Promise.resolve(true) : remove(tabId); },
+    attached(tabId) {
+      // Restored, idle-detached tabs still own their page DOM.
+      const state = record(tabId);
+      return enabled && !state.pending ? Promise.resolve(true) : remove(tabId);
+    },
     // Only a closed/replaced tab is forgotten; detachment does not erase its DOM.
     forget(tabId) { records.delete(tabId); },
     pendingTabs() { return [...records].filter(([, state]) => state.pending).map(([tabId]) => tabId); },

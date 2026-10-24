@@ -2317,6 +2317,7 @@ async function announceOwnedTabLazily(tabId) {
   const sessionId = `cb-tab-${tabId}`;
   const entry = newTabEntry(tabId, sessionId, String(info.targetId), false);
   tabs.set(tabId, entry);
+  void cursorOverlay.attached(tabId);
   sessionToTab.set(sessionId, tabId);
   rememberSessionTarget(sessionId, entry.targetId);
   setBadge(tabId, port ? 'on' : 'connecting');

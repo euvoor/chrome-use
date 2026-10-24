@@ -164,7 +164,7 @@ test('zh_CN: the options page renders in Chinese', async () => {
   const timers = [];
   const target = { chrome: {
     storage: { sync: { get(defaults, callback) { callback(defaults); }, set() {} }, local: { get(_key, callback) { callback({}); }, set() {} } },
-    runtime: { getManifest: () => ({ version: '0.5.59' }), sendMessage(request, callback) { callback(request.type === 'ab-status' ? status : { success: true, result: { claims: [], bindings: [] } }); } },
+    runtime: { getManifest: () => ({ version: '0.5.59' }), sendMessage(request, callback) { callback(target.chrome.runtime.lastError ? undefined : request.type === 'ab-status' ? status : { success: true, result: { claims: [], bindings: [] } }); } },
     commands: { getAll(callback) { callback([{ name: 'inspect-element', shortcut: 'Alt+Shift+C' }]); } },
   } };
   installI18n('zh_CN', target);
@@ -190,12 +190,20 @@ test('zh_CN: the options page renders in Chinese', async () => {
     const retry = timers.find(timer => timer.ms === 2000);
     assert.ok(retry, 'pending cleanup is rechecked');
     target.chrome.runtime.lastError = { message: 'worker unavailable' };
+    const beforeFailure = timers.length;
     retry.fn();
+    assert.ok(timers.slice(beforeFailure).some(timer => timer.ms === 2000), 'a failed query schedules recovery');
     assert.equal(byId.get('cursorCleanupWarning').hidden, false, 'a failed query does not clear the warning');
     delete target.chrome.runtime.lastError;
     status.cursorCleanupPending = [];
     retry.fn();
     assert.equal(byId.get('cursorCleanupWarning').hidden, true);
+    const beforePropagation = timers.length;
+    timers.at(-1).fn();
+    assert.ok(timers.slice(beforePropagation).some(timer => timer.ms === 2000), 'empty early status keeps polling');
+    status.cursorCleanupPending = [1];
+    timers.at(-1).fn();
+    assert.equal(byId.get('cursorCleanupWarning').hidden, false, 'late cleanup failure becomes visible');
   } finally {
     Object.assign(globalThis, saved);
   }

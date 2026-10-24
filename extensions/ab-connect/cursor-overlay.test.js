@@ -278,3 +278,51 @@ test('explicit cursor commands report their observed effect and refuse under ste
   assert.equal((await f.run("cursorCommand('ABExt.setCursorVisible', {visible:true})")).applied, false);
   clean(f.pages.get(1));
 });
+
+
+test('restored tabs enter cleanup inventory even while drawing is enabled', async () => {
+  const f = fixture();
+  f.pages.get(1).run(cursorOverlayExpression(10, 20, true));
+  await f.cursor.setEnabled(true);
+  await f.cursor.attached(1);
+  assert.equal(f.calls.length, 0, 'registration does not force debugger access');
+  await f.cursor.setEnabled(false);
+  clean(f.pages.get(1));
+});
+
+test('reattachment retries pending cleanup after drawing is enabled again', async () => {
+  let detached = false;
+  const f = fixture((_id, _expr, run) => {
+    if (detached) throw new Error('detached');
+    return run();
+  });
+  await f.cursor.setEnabled(true);
+  await f.cursor.draw(1, 10, 20);
+  detached = true;
+  await f.cursor.setEnabled(false);
+  await f.cursor.setEnabled(true);
+  detached = false;
+  await f.cursor.attached(1);
+  clean(f.pages.get(1));
+  assert.deepEqual(f.cursor.pendingTabs(), []);
+});
+
+test('lazy restoration registers cursor ownership without a debugger attachment', async () => {
+  const source = readFileSync(new URL('./background.js', import.meta.url), 'utf8');
+  const start = source.indexOf('async function announceOwnedTabLazily(');
+  const end = source.indexOf('async function announceAttachedTab(', start);
+  const registered = [], tabs = new Map();
+  const context = vm.createContext({
+    tabs, removedTabs: new Set(), sessionToTab: new Map(), port: null,
+    chrome: { debugger: { getTargets: async () => [], detach: async () => {} } },
+    withRelayTimeout: p => p, targetInfoForTab: () => ({ targetId: 'T1' }),
+    newTabEntry: (_id, sessionId, targetId) => ({ sessionId, targetId, attached: false }),
+    cursorOverlay: { attached: async id => registered.push(id) },
+    rememberSessionTarget() {}, setBadge() {}, announceAttachedTab: async () => {},
+    attachTab: async () => { throw new Error('must not attach'); },
+  });
+  vm.runInContext(source.slice(start, end), context);
+  await context.announceOwnedTabLazily(1);
+  assert.deepEqual(registered, [1]);
+  assert.equal(tabs.get(1).attached, false);
+});
