@@ -39,7 +39,8 @@ const fixture = crossPort => `<!doctype html><meta charset="utf-8"><title>Stealt
 <div id="editor" contenteditable="true">old text</div><div id="cover"></div>
 <iframe id="same" src="/child"></iframe><iframe id="cross" src="http://localhost:${crossPort}/child"></iframe>
 <script>
-window.audit={events:[],mutations:[],doubleCount:0};
+window.audit={events:[],mutations:[],doubleCount:0,frameEvents:[]};
+window.addEventListener('message',e=>{if(e.data?.fixtureEvent)audit.frameEvents.push(e.data.fixtureEvent)});
 for(const type of ['mousedown','mouseup','click','dblclick','beforeinput','input','change','focusout'])
  document.addEventListener(type,e=>audit.events.push({type,detail:e.detail||0,trusted:e.isTrusted,target:e.target.id}));
 document.querySelector('#double').ondblclick=()=>audit.doubleCount++;
@@ -48,10 +49,10 @@ new MutationObserver(records=>audit.mutations.push(...records.map(r=>({type:r.ty
  .observe(document.documentElement,{childList:true,subtree:true,attributes:true});
 audit.baseline=Object.getOwnPropertyNames(window);
 </script>`;
-const child = '<!doctype html><button id="child">Child target</button><script>window.events=[];document.querySelector("button").addEventListener("dblclick",e=>events.push({trusted:e.isTrusted,detail:e.detail}));</script>';
+const child = name => `<!doctype html><style>button{width:100px;height:30px}</style><button id="child">${name}</button><script>window.events=[];for(const type of ['mousedown','mouseup','click','dblclick'])document.querySelector('button').addEventListener(type,e=>{const event={name:'${name}',type,trusted:e.isTrusted,detail:e.detail};events.push(event);parent.postMessage({fixtureEvent:event},'*')});</script>`;
 const serve = handler => new Promise(resolve => { const s = http.createServer(handler); s.listen(0, () => resolve(s)); });
-const cross = await serve((req, res) => { res.setHeader('Content-Type', 'text/html'); res.end(child); });
-const site = await serve((req, res) => { res.setHeader('Content-Type', 'text/html'); res.end(req.url === '/child' ? child : fixture(cross.address().port)); });
+const cross = await serve((req, res) => { res.setHeader('Content-Type', 'text/html'); res.end(child("Cross target")); });
+const site = await serve((req, res) => { res.setHeader('Content-Type', 'text/html'); res.end(req.url === '/child' ? child('Same target') : fixture(cross.address().port)); });
 const url = `http://127.0.0.1:${site.address().port}/`;
 const children = [];
 
@@ -195,7 +196,7 @@ async function runMode(mode) {
             : {x:10-expected.scrollX,y:10-expected.scrollY,width:500,height:300};
           const overlaps = r => r.x<region.x+region.width && r.x+r.width>region.x && r.y<region.y+region.height && r.y+r.height>region.y;
           const wanted = expected.children.filter(overlaps).map(r=>({x:Math.round(r.x-region.x),y:Math.round(r.y-region.y),width:Math.round(r.width),height:Math.round(r.height)})).sort((a,b)=>a.x-b.x);
-          const actual = shot.annotations.filter(a=>a.name==='Child target').map(a=>a.box).sort((a,b)=>a.x-b.x);
+          const actual = shot.annotations.filter(a=>['Same target','Cross target'].includes(a.name)).map(a=>a.box).sort((a,b)=>a.x-b.x);
           assert.deepEqual(actual,wanted,JSON.stringify({mode,label,scale,scroll,frameScale,shot}));
           assert.ok(Math.abs(bytes.readUInt32BE(16)-region.width*scale)<=1,'PNG width matches CSS capture region and device scale');
           assert.ok(Math.abs(bytes.readUInt32BE(20)-region.height*scale)<=1,'PNG height matches CSS capture region and device scale');
@@ -204,6 +205,31 @@ async function runMode(mode) {
       }
       await evaluate("document.querySelector('#cross').style.transform='none';scrollTo(0,0)");
       return results;
+    });
+    await check(`${mode}: iframe double-click verifies delivery or refuses before input`, async () => {
+      const observations = [];
+      for (const name of ['Same target','Cross target']) {
+        await evaluate('audit.frameEvents=[];audit.events=[]');
+        const snapshot = await ok(['snapshot','-i']);
+        const line = snapshot.snapshot.split('\n').find(line=>line.includes(name)&&line.includes('button'));
+        assert.ok(line, `missing ${name} in snapshot`);
+        const ref = line.match(/\[ref=(e\d+)\]/)?.[1];
+        assert.ok(ref, `missing ref in ${line}`);
+        const result = await cli(['dblclick',`@${ref}`]);
+        const events = await evaluate('audit.frameEvents');
+        if (result.success) {
+          assert.equal(result.data.verified,true);
+          assert.equal(events.length,7);
+          assert.ok(events.every(e=>e.name===name&&e.trusted));
+          assert.deepEqual(events.map(e=>[e.type,e.detail]),[['mousedown',1],['mouseup',1],['click',1],['mousedown',2],['mouseup',2],['click',2],['dblclick',2]]);
+        } else {
+          assert.match(result.error,/isolat|frame|cross.origin|cannot safely target/i);
+          assert.deepEqual(events,[],'refusal must precede frame input');
+        }
+        assert.equal(await evaluate('audit.events.filter(e=>["click","dblclick"].includes(e.type)).length'),0,'frame command must not click the top document');
+        observations.push({name,result,events});
+      }
+      return observations;
     });
     await check(`${mode}: coordinate hover adds no page globals or persistent overlay`, async () => {
       const before = await evaluate('Object.getOwnPropertyNames(window).sort()');
@@ -214,6 +240,45 @@ async function runMode(mode) {
       return response;
     });
     if (mode === 'relay') {
+      await check('relay: hover input rejection removes observed isolated listeners', async () => {
+        const tabs = await A.evaluate(worker.sid, 'chrome.tabs.query({})');
+        const tab = tabs.find(t=>t.url===url); assert.ok(tab);
+        const debug = (method, params={}) => A.evaluate(worker.sid, `chrome.debugger.sendCommand({tabId:${tab.id}},${JSON.stringify(method)},${JSON.stringify(params)})`);
+        const documentObject = (await debug('Runtime.evaluate',{expression:'document',returnByValue:false})).result.objectId;
+        const listeners = async () => (await debug('DOMDebugger.getEventListeners',{objectId:documentObject,depth:1,pierce:true})).listeners.filter(l=>['mousemove','mouseover'].includes(l.type)).map(l=>({type:l.type,useCapture:l.useCapture,scriptId:l.scriptId}));
+        const before = await listeners();
+        await A.evaluate(worker.sid, `(() => {
+          const original=chrome.debugger.sendCommand.bind(chrome.debugger);
+          globalThis.stealthFixtureFault={original,triggered:false,release:null};
+          chrome.debugger.sendCommand=async (...args)=>{
+            const f=globalThis.stealthFixtureFault;
+            if(args[0]?.tabId===${tab.id} && args[1]==='Input.dispatchMouseEvent' && !f.triggered){
+              f.triggered=true;await new Promise(resolve=>f.release=resolve);throw Error('fixture injected hover input rejection');
+            }
+            return original(...args);
+          };return true;
+        })()`);
+        let operation;
+        try {
+          operation = cli(['hover','90','40']);
+          await waitFor(()=>A.evaluate(worker.sid,'stealthFixtureFault.triggered'),{timeout:5000,label:'hover fault interception'});
+          const during = await listeners();
+          assert.equal(during.length,before.length+2,'positive control: inspector must observe both live recorder listeners');
+          const released = Date.now();
+          await A.evaluate(worker.sid,'stealthFixtureFault.release();true');
+          const result = await operation;
+          assert.equal(result.success,false);
+          assert.match(result.error,/fixture injected hover input rejection/);
+          await waitFor(async ()=>(await listeners()).length===before.length,{timeout:2500,label:'guard removes listeners before expiry'});
+          const after = await listeners();
+          assert.deepEqual(after,before);
+          return {before,during,after,cleanupMs:Date.now()-released,result};
+        } finally {
+          await A.evaluate(worker.sid,'stealthFixtureFault.release?.();chrome.debugger.sendCommand=stealthFixtureFault.original;delete globalThis.stealthFixtureFault;true');
+          if(operation) await operation.catch(()=>{});
+          await debug('Runtime.releaseObject',{objectId:documentObject}).catch(()=>{});
+        }
+      });
       await check('relay: background tab keeps the other tab active', async () => {
         const tabs = await A.evaluate(worker.sid, 'chrome.tabs.query({})');
         const agent = tabs.find(t=>t.url===url), other = tabs.find(t=>t.id!==agent?.id && t.windowId===agent.windowId);
