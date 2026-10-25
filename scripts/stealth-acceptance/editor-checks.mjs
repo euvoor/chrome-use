@@ -46,7 +46,12 @@ export async function checkEditors({mode,profile,url,ok,cli,evaluate,check,brows
       const tab=(await A.evaluate(worker.sid,'chrome.tabs.query({})')).find(t=>t.url===editorUrl);assert.ok(tab);
       await A.evaluate(worker.sid,`chrome.tabs.update(${tab.id},{active:true}).then(()=>chrome.windows.update(${tab.windowId},{focused:true}))`);
     } else await grantOnLaunchedBrowser(profile,new URL(url).origin);
-    assert.equal(await evaluate("typeof window.monaco === 'undefined' && typeof window.require === 'undefined'"),true,'exercise hidden API fallback');
+    const apiVisibility=await evaluate("({monacoTag:window.monaco?.tagName,hasEditorAPI:!!window.monaco?.editor,requireType:typeof window.require})");
+    // A div with id=monaco can create a named window property without exposing
+    // any editor API. Check the mechanism the production resolver uses.
+    assert.equal(apiVisibility.hasEditorAPI,false,JSON.stringify(apiVisibility));
+    assert.notEqual(apiVisibility.requireType,'function','exercise hidden module API fallback');
+    await waitFor(()=>evaluate('document.hasFocus()'),{timeout:5000,label:'disposable editor page has clipboard focus'});
     assert.equal(await evaluate("!!document.querySelector('#monaco textarea.inputarea')"),true,'textarea input mode');
     await evaluate(`navigator.clipboard.write([new ClipboardItem({'text/plain':new Blob(['fixture clipboard sentinel'],{type:'text/plain'}),'text/html':new Blob(['<b>fixture clipboard sentinel</b>'],{type:'text/html'})})])`);
     const before=await evaluate('fixture.clipboard()');
@@ -55,7 +60,7 @@ export async function checkEditors({mode,profile,url,ok,cli,evaluate,check,brows
     const response=await cli(['fill','#monaco',value]);
     const observed=await evaluate("({model:fixture.read('monaco'),events:fixture.events.filter(e=>e.editor==='monaco'),errors:fixture.errors})");
     const after=await evaluate('fixture.clipboard()');
-    const record={value,response,observed,before,after};(evidence.editorObservations??=[]).push(record);save();
+    const record={value,apiVisibility,response,observed,before,after};(evidence.editorObservations??=[]).push(record);save();
     assert.equal(response.success,true,JSON.stringify(record));
     assert.equal(response.data.engine,'monaco-clipboard');
     assert.equal(observed.model,value);

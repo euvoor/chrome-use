@@ -6,6 +6,8 @@ on:
     paths:
       - '.github/workflows/stealth-acceptance.yml'
       - 'scripts/stealth-acceptance/**'
+      - '!scripts/stealth-acceptance/editors/**'
+      - '!scripts/stealth-acceptance/editor-checks.mjs'
       - 'cli/**'
   workflow_dispatch:
     inputs:
