@@ -15,6 +15,10 @@ on:
         description: Run only the permanent screenshot E2E regression
         type: boolean
         default: false
+      monaco_e2e_only:
+        description: Run only the permanent Monaco clipboard E2E regression
+        type: boolean
+        default: false
       editors_only:
         description: Run actual editor package acceptance on disposable profiles
         type: boolean
@@ -29,7 +33,7 @@ permissions:
 
 jobs:
   headed:
-    if: github.repository == 'euvoor/chrome-use' && !inputs.annotation_only
+    if: github.repository == 'euvoor/chrome-use' && !inputs.annotation_only && !inputs.monaco_e2e_only
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.benchmark_only && 45 || 25 }}
     steps:
@@ -154,7 +158,7 @@ jobs:
           if-no-files-found: warn
 
   windows-custody-control:
-    if: github.repository == 'euvoor/chrome-use' && github.event_name == 'workflow_dispatch' && !inputs.annotation_only && !inputs.editors_only && !inputs.benchmark_only
+    if: github.repository == 'euvoor/chrome-use' && github.event_name == 'workflow_dispatch' && !inputs.annotation_only && !inputs.monaco_e2e_only && !inputs.editors_only && !inputs.benchmark_only
     runs-on: windows-latest
     timeout-minutes: 15
     strategy:
@@ -177,7 +181,7 @@ jobs:
         run: cargo test --locked --profile ci --manifest-path cli/Cargo.toml job_contains_descendants_before_the_leader_runs_and_confirms_their_exit -- --nocapture
 
   annotation-e2e:
-    if: github.repository == 'euvoor/chrome-use' && inputs.annotation_only
+    if: github.repository == 'euvoor/chrome-use' && (inputs.annotation_only || inputs.monaco_e2e_only)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -193,8 +197,9 @@ jobs:
           shared-key: linux-ci
       # This existing E2E helper uses headless/no-sandbox, as in full CI.
       # Its isolation boundary is the disposable hosted VM, not Chrome itself.
-      - name: Run permanent annotation geometry and mutation regression
+      - name: Run selected permanent browser regression
         env:
           AGENT_BROWSER_ALLOW_HEADLESS: '1'
           AGENT_BROWSER_EXECUTABLE_PATH: /usr/bin/google-chrome
-        run: cargo test --locked --profile ci --features e2e-tests --manifest-path cli/Cargo.toml e2e_screenshot_annotations_leave_no_dom_mutations -- --ignored --test-threads=1
+          E2E_FILTER: ${{ inputs.monaco_e2e_only && 'e2e_fill_monaco_is_atomic_and_verified' || 'e2e_screenshot_annotations_leave_no_dom_mutations' }}
+        run: cargo test --locked --profile ci --features e2e-tests --manifest-path cli/Cargo.toml "$E2E_FILTER" -- --ignored --test-threads=1
