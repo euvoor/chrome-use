@@ -8,13 +8,18 @@ on:
       - 'scripts/stealth-acceptance/**'
       - 'cli/**'
   workflow_dispatch:
+    inputs:
+      annotation_only:
+        description: Run only the permanent screenshot E2E regression
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   headed:
-    if: github.repository == 'euvoor/chrome-use'
+    if: github.repository == 'euvoor/chrome-use' && !inputs.annotation_only
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -84,7 +89,7 @@ jobs:
           if-no-files-found: warn
 
   windows-custody-control:
-    if: github.repository == 'euvoor/chrome-use' && github.event_name == 'workflow_dispatch'
+    if: github.repository == 'euvoor/chrome-use' && github.event_name == 'workflow_dispatch' && !inputs.annotation_only
     runs-on: windows-latest
     timeout-minutes: 15
     strategy:
@@ -105,3 +110,26 @@ jobs:
           shared-key: windows-custody-control
       - name: Reproduce process custody timeout on baseline and combined source
         run: cargo test --locked --profile ci --manifest-path cli/Cargo.toml job_contains_descendants_before_the_leader_runs_and_confirms_their_exit -- --nocapture
+
+  annotation-e2e:
+    if: github.repository == 'euvoor/chrome-use' && inputs.annotation_only
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: cli
+          shared-key: linux-ci
+      # This existing E2E helper uses headless/no-sandbox, as in full CI.
+      # Its isolation boundary is the disposable hosted VM, not Chrome itself.
+      - name: Run permanent annotation geometry and mutation regression
+        env:
+          AGENT_BROWSER_ALLOW_HEADLESS: '1'
+          AGENT_BROWSER_EXECUTABLE_PATH: /usr/bin/google-chrome
+        run: cargo test --locked --profile ci --features e2e-tests --manifest-path cli/Cargo.toml e2e_screenshot_annotations_leave_no_dom_mutations -- --ignored --test-threads=1

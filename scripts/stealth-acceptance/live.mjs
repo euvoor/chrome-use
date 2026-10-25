@@ -130,6 +130,15 @@ async function runMode(mode) {
       await A.evaluate(worker.sid, "chrome.storage.local.set({ab_stealth:true,ab_cursor:true})");
       await waitFor(() => fs.existsSync(path.join(env.CHROME_USE_RELAY_DIR, 'relay-cdp-url')), { timeout: 30000, label: 'extension relay' });
       evidence.modes.push({ mode, chrome: browser.version, stealth: await A.evaluate(worker.sid, "chrome.storage.local.get(['ab_stealth','ab_cursor'])") });
+      await A.evaluate(worker.sid,`(() => {
+        const original=chrome.debugger.sendCommand.bind(chrome.debugger);globalThis.stealthCaptureTrace=[];
+        chrome.debugger.sendCommand=async (...args)=>{
+          if(args[1]!=='Page.captureScreenshot')return original(...args);
+          const record={target:args[0],params:args[2],started:Date.now()};stealthCaptureTrace.push(record);
+          try{const result=await original(...args);record.finished=Date.now();record.bytes=result.data?.length;return result;}
+          catch(error){record.error=error.message;throw error;}
+        };return true;
+      })()`);
     }
     await ok(['open', url]);
     await waitFor(async () => (await evaluate('document.readyState')) === 'complete', { timeout: 30000, label: 'fixture ready' });
@@ -185,7 +194,28 @@ async function runMode(mode) {
           })()`);
           await evaluate('audit.mutations=[]');
           const file = path.join(outDir, `${mode}-${label}-${scale}-${scroll}-${frameScale}.png`);
-          const shot = await ok(['screenshot', file, '--annotate', ...args]);
+          let shot;
+          try { shot = await ok(['screenshot', file, '--annotate', ...args]); }
+          catch(error) {
+            const failure={mode,label,scale,scroll,frameScale,expected,error:error.message};
+            if(mode==='relay') {
+              failure.trace=await A.evaluate(worker.sid,'stealthCaptureTrace');
+              const target=failure.trace.at(-1)?.target;
+              if(target) {
+                const metrics=await A.evaluate(worker.sid,`chrome.debugger.sendCommand(${JSON.stringify(target)},'Page.getLayoutMetrics',{})`);
+                failure.metrics=metrics;
+                const size=metrics.cssContentSize;
+                const attempts=[['full-control',{x:0,y:0,width:size.width,height:size.height,scale:1}],['top-region',{x:0,y:0,width:metrics.cssLayoutViewport.clientWidth,height:metrics.cssLayoutViewport.clientHeight,scale:1}]];
+                failure.rawControls=[];
+                for(const [name,clip] of attempts) {
+                  const control=await A.evaluate(worker.sid,`Promise.race([chrome.debugger.sendCommand(${JSON.stringify(target)},'Page.captureScreenshot',${JSON.stringify({format:'png',fromSurface:true,captureBeyondViewport:true,clip})}).then(r=>({data:r.data})).catch(e=>({error:e.message})),new Promise(r=>setTimeout(()=>r({error:'probe timeout after 5 seconds'}),5000))])`);
+                  if(control.data){fs.writeFileSync(path.join(outDir,`${mode}-${name}.png`),Buffer.from(control.data,'base64'));failure.rawControls.push({name,ok:true,clip});}
+                  else failure.rawControls.push({name,ok:false,clip,error:control.error});
+                }
+              }
+            }
+            (evidence.captureFailures??=[]).push(failure);save();throw error;
+          }
           const bytes = fs.readFileSync(file);
           assert.ok(bytes.length > 100);
           assert.ok(Array.isArray(shot.annotations) && shot.annotations.length > 0, JSON.stringify(shot));
@@ -297,6 +327,42 @@ async function runMode(mode) {
         const active = await A.evaluate(worker.sid, `chrome.tabs.query({windowId:${agent.windowId},active:true})`);
         assert.equal(active[0].id, other.id);
         return { agent: agent.id, active: other.id };
+      });
+      await check('relay: isolation loss refuses internal read and preserves explicit eval', async () => {
+        const tabs = await A.evaluate(worker.sid,'chrome.tabs.query({})');
+        const tab = tabs.find(t=>t.url===url); assert.ok(tab);
+        await A.evaluate(worker.sid,`(() => {
+          const original=chrome.debugger.sendCommand.bind(chrome.debugger);
+          globalThis.stealthIsolationFault={original,failedExpression:null,phase:'internal',evaluations:[],creations:0};
+          chrome.debugger.sendCommand=async (...args)=>{
+            const f=globalThis.stealthIsolationFault;
+            if(args[0]?.tabId===${tab.id}){
+              if(args[1]==='Runtime.evaluate'){
+                f.evaluations.push({phase:f.phase,contextId:args[2]?.contextId,expression:args[2]?.expression});
+                if(!f.failedExpression && args[2]?.contextId && args[2]?.expression?.includes('#double')){
+                  f.failedExpression=args[2].expression;throw Error('Cannot find context with specified id');
+                }
+              }
+              if(args[1]==='Page.createIsolatedWorld' && f.failedExpression){f.creations++;throw Error('fixture denied isolated world recreation');}
+            }
+            return original(...args);
+          };return true;
+        })()`);
+        try {
+          const result = await cli(['get','text','#double']);
+          assert.equal(result.success,false);
+          assert.match(result.error,/isolation_unavailable|isolated world|isolation unavailable/i);
+          const internal = await A.evaluate(worker.sid,'({failedExpression:stealthIsolationFault.failedExpression,creations:stealthIsolationFault.creations,evaluations:stealthIsolationFault.evaluations})');
+          assert.ok(internal.failedExpression && internal.creations>0,'positive control: internal context failed and recreation was attempted');
+          assert.ok(!internal.evaluations.some(e=>e.expression===internal.failedExpression&&!e.contextId),'no unscoped retry of refused internal evaluation');
+          await A.evaluate(worker.sid,"stealthIsolationFault.phase='explicit';true");
+          assert.equal(await evaluate('document.title'),'Stealth fixture');
+          const explicit = await A.evaluate(worker.sid,"stealthIsolationFault.evaluations.filter(e=>e.phase==='explicit'&&e.expression==='document.title')");
+          assert.ok(explicit.some(e=>!e.contextId),'deliberate user eval remains in main world');
+          return {result,internal,explicit};
+        } finally {
+          await A.evaluate(worker.sid,'chrome.debugger.sendCommand=stealthIsolationFault.original;delete globalThis.stealthIsolationFault;true');
+        }
       });
     }
   } finally {
