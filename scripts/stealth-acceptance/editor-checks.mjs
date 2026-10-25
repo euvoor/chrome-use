@@ -8,6 +8,7 @@ async function grantOnLaunchedBrowser(profile, origin) {
   assert.match(port,/^\d+$/); assert.ok(endpoint.startsWith('/devtools/browser/'));
   const socket = new WebSocket(`ws://127.0.0.1:${port}${endpoint}`);
   try {
+    await new Promise((resolve,reject)=>{socket.onopen=resolve;socket.onerror=reject;});
     let next=0;
     const send=(method,params)=>new Promise((resolve,reject)=>{
       const id=++next;
@@ -83,4 +84,71 @@ export async function checkEditors({mode,profile,url,ok,cli,evaluate,check,brows
     assert.deepEqual(observed.errors,[]);
     return record;
   });
+  for (const fault of ['backup','focus','restore']) {
+    await check(`${mode}: real Monaco ${fault} failure has explicit outcome and cleanup`,async()=>{
+      await evaluate(`navigator.clipboard.write([new ClipboardItem({'text/plain':new Blob(['fault backup'],{type:'text/plain'}),'text/html':new Blob(['<b>fault backup</b>'],{type:'text/html'})})])`);
+      const before=await evaluate('fixture.clipboard()');
+      const oldModel=await evaluate("fixture.read('monaco')");
+      await evaluate(`fixture.events.length=0;fixture.armFault(${JSON.stringify(fault)})`);
+      let response,details;
+      const value='fault case '+fault;
+      try { response=await cli(['fill','#monaco',value]);details=await evaluate('fixture.fault'); }
+      finally { await evaluate('fixture.disarmFault()'); }
+      const observed=await evaluate("({model:fixture.read('monaco'),events:fixture.events.filter(e=>e.editor==='monaco')})");
+      const after=await evaluate('fixture.clipboard()');
+      const record={mode,fault,value,response,details,before,after,observed};
+      (evidence.editorFaults??=[]).push(record);save();
+      assert.equal(response.success,false,JSON.stringify(record));
+      assert.equal(details.fired,true,'intended failure was reached');
+      assert.match(response.error,new RegExp('fixture '+fault+' rejected'));
+      if(fault==='restore') {
+        assert.equal(observed.model,value);
+        assert.equal(details.stages,1,'no destructive text fallback');
+      } else {
+        assert.deepEqual(after,before,'restore saved clipboard after setup failure');
+        assert.equal(observed.model,oldModel,'no native edit after setup refusal');
+        assert.ok(!observed.events.some(e=>['paste','copy'].includes(e.type)));
+      }
+      return record;
+    });
+  }
+  if(mode==='relay') for(const fault of ['input','concurrent']) {
+    await check(`relay: real Monaco ${fault} fault preserves clipboard and removes listeners`,async()=>{
+      const tab=(await A.evaluate(worker.sid,'chrome.tabs.query({})')).find(t=>t.url===editorUrl);assert.ok(tab);
+      const listenerCount=()=>A.evaluate(worker.sid,`(async()=>{
+        const send=chrome.debugger.sendCommand.bind(chrome.debugger),target={tabId:${tab.id}};
+        const object=await send(target,'Runtime.evaluate',{expression:'document',returnByValue:false});
+        try { const data=await send(target,'DOMDebugger.getEventListeners',{objectId:object.result.objectId});return data.listeners.filter(l=>['paste','copy'].includes(l.type)).map(l=>({type:l.type,capture:l.useCapture})); }
+        finally {await send(target,'Runtime.releaseObject',{objectId:object.result.objectId});}
+      })()`);
+      await evaluate(`navigator.clipboard.write([new ClipboardItem({'text/plain':new Blob(['fault backup'],{type:'text/plain'}),'text/html':new Blob(['<b>fault backup</b>'],{type:'text/html'})})])`);
+      const before=await evaluate('fixture.clipboard()'),listenersBefore=await listenerCount(),oldModel=await evaluate("fixture.read('monaco')");
+      await evaluate('fixture.events.length=0');
+      await A.evaluate(worker.sid,`(()=>{
+        const original=chrome.debugger.sendCommand.bind(chrome.debugger);globalThis.editorFaultRestore=()=>{chrome.debugger.sendCommand=original;};globalThis.editorFaultSeen=0;
+        chrome.debugger.sendCommand=async(...args)=>{
+          if(args[1]==='Input.dispatchKeyEvent'&&args[2]?.commands?.includes('paste')) {
+            editorFaultSeen++;
+            if(${JSON.stringify(fault)}==='input')throw Error('fixture input rejected');
+            const result=await original(...args);
+            await original(args[0],'Runtime.evaluate',{expression:"navigator.clipboard.writeText('newer fixture clipboard')",awaitPromise:true,returnByValue:true});
+            return result;
+          }
+          return original(...args);
+        };return true;
+      })()`);
+      let response,seen;
+      try {response=await cli(['fill','#monaco','fault case '+fault]);seen=await A.evaluate(worker.sid,'editorFaultSeen');}
+      finally {await A.evaluate(worker.sid,'editorFaultRestore();delete globalThis.editorFaultRestore;delete globalThis.editorFaultSeen;true');}
+      const after=await evaluate('fixture.clipboard()'),listenersAfter=await listenerCount();
+      const observed=await evaluate("({model:fixture.read('monaco'),events:fixture.events.filter(e=>e.editor==='monaco')})");
+      const record={mode,fault,response,seen,before,after,listenersBefore,listenersAfter,observed};
+      (evidence.editorFaults??=[]).push(record);save();
+      assert.equal(seen,1);assert.equal(response.success,false,JSON.stringify(record));
+      assert.deepEqual(listenersAfter,listenersBefore,'temporary clipboard listeners removed before lease expiry');
+      if(fault==='input') {assert.match(response.error,/fixture input rejected/);assert.deepEqual(after,before);assert.equal(observed.model,oldModel);}
+      else {assert.match(response.error,/clipboard changed before editor input/);assert.equal(await evaluate('navigator.clipboard.readText()'),'newer fixture clipboard');assert.ok(!observed.events.some(e=>e.type==='copy'));}
+      return record;
+    });
+  }
 }

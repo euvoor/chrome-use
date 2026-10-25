@@ -64,13 +64,25 @@ window.fixture.clipboardControl = async () => {
 };
 // Record the real package's Clipboard API calls separately from DOM events.
 window.fixture.clipboardCalls = [];
+const editorInput=document.querySelector('#monaco textarea.inputarea');
+const originalFocus=editorInput.focus;
+window.fixture.armFault = kind => {window.fixture.fault={kind,stages:0,fired:false};};
+window.fixture.disarmFault = () => {editorInput.focus=originalFocus;window.fixture.fault=null;};
 for (const name of ['read','write','readText','writeText']) {
   const original = navigator.clipboard[name].bind(navigator.clipboard);
   navigator.clipboard[name] = async (...args) => {
     const record = {name, started: performance.now(), stack: new Error().stack};
     window.fixture.clipboardCalls.push(record);
+    const fault=window.fixture.fault;
+    if(fault&&((name==='read'&&fault.kind==='backup')||(name==='write'&&fault.kind==='restore'&&fault.stages))) {
+      fault.fired=true;throw Error('fixture '+fault.kind+' rejected');
+    }
     try { const result = await original(...args); record.finished=performance.now();
       if(name === 'read') record.types=result.map(item=>[...item.types]);
+      if(name==='writeText'&&fault) {
+        fault.stages++;
+        if(fault.kind==='focus') editorInput.focus=()=>{fault.fired=true;throw Error('fixture focus rejected');};
+      }
       return result;
     } catch(error) { record.error=String(error); throw error; }
   };
