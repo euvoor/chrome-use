@@ -8,12 +8,18 @@ async function grantOnLaunchedBrowser(profile, origin) {
   assert.match(port,/^\d+$/); assert.ok(endpoint.startsWith('/devtools/browser/'));
   const socket = new WebSocket(`ws://127.0.0.1:${port}${endpoint}`);
   try {
-    await new Promise((resolve,reject)=>{socket.onopen=resolve;socket.onerror=reject;});
-    await new Promise((resolve,reject)=>{
-      const timer=setTimeout(()=>reject(Error('clipboard permission grant timed out')),10000);
-      socket.onmessage=event=>{const message=JSON.parse(event.data);if(message.id!==1)return;clearTimeout(timer);message.error?reject(Error(message.error.message)):resolve(message.result);};
-      socket.send(JSON.stringify({id:1,method:'Browser.grantPermissions',params:{origin,permissions:['clipboardReadWrite','clipboardSanitizedWrite']}}));
+    let next=0;
+    const send=(method,params)=>new Promise((resolve,reject)=>{
+      const id=++next;
+      const timer=setTimeout(()=>reject(Error(method+' timed out')),10000);
+      socket.onmessage=event=>{const message=JSON.parse(event.data);if(message.id!==id)return;clearTimeout(timer);message.error?reject(Error(message.error.message)):resolve(message.result);};
+      socket.send(JSON.stringify({id,method,params}));
     });
+    await send('Browser.grantPermissions',{origin,permissions:['clipboardReadWrite','clipboardSanitizedWrite']});
+    const {targetInfos}=await send('Target.getTargets',{});
+    const tab=targetInfos.find(t=>t.type==='page'&&t.url.startsWith(origin+'/editors/'));
+    assert.ok(tab,'owned launched fixture target exists');
+    await send('Target.activateTarget',{targetId:tab.targetId});
   } finally { socket.close(); }
 }
 
@@ -72,6 +78,7 @@ export async function checkEditors({mode,profile,url,ok,cli,evaluate,check,brows
     assert.ok(observed.events.some(e=>e.type==='paste'&&e.trusted));
     assert.ok(observed.events.some(e=>e.type==='copy'&&e.trusted));
     assert.ok(observed.events.every(e=>!e.exposedState?.length),'no named transaction state during native clipboard events');
+    assert.ok(Array.isArray(before)&&Array.isArray(after),'both clipboard reads completed');
     assert.deepEqual(after,before,'restore every MIME type exposed by Clipboard.read');
     assert.deepEqual(observed.errors,[]);
     return record;

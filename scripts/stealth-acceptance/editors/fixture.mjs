@@ -18,7 +18,13 @@ for (const type of ['beforeinput','input','change','focusout','paste','copy','ke
       formats: event.clipboardData ? [...event.clipboardData.types] : [] };
     if (type === 'paste' || type === 'copy') record.exposedState = [...document.querySelectorAll('#monaco,#monaco *')]
       .flatMap(node => Object.getOwnPropertyNames(node).filter(name => name.startsWith('__chromeUseMonaco')));
-    queueMicrotask(() => { record.prevented = event.defaultPrevented; events.push(record); });
+    const sample = () => ({ prevented: event.defaultPrevented, formats: event.clipboardData ? [...event.clipboardData.types].map(type=>[type,event.clipboardData.getData(type)]) : [] });
+    if (event.clipboardData) {
+      record.capture = sample();
+      queueMicrotask(() => { record.microtask = sample(); });
+      setTimeout(() => { record.task = sample(); }, 0);
+    }
+    setTimeout(() => { record.prevented = event.defaultPrevented; events.push(record); }, 0);
   }, true);
 }
 
@@ -69,4 +75,9 @@ for (const name of ['read','write','readText','writeText']) {
     } catch(error) { record.error=String(error); throw error; }
   };
 }
+document.addEventListener('copy', event => {
+  if (!event.target.closest('#monaco')) return;
+  const record = {type:'copy',phase:'bubble',trusted:event.isTrusted,formats:[...event.clipboardData.types].map(type=>[type,event.clipboardData.getData(type)])};
+  events.push({editor:'monaco',...record});
+});
 window.fixture.ready = true;
