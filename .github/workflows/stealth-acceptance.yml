@@ -84,7 +84,7 @@ jobs:
           if-no-files-found: warn
 
   windows-custody-control:
-    if: github.repository == 'euvoor/chrome-use'
+    if: github.repository == 'euvoor/chrome-use' && github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     timeout-minutes: 15
     strategy:

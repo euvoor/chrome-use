@@ -123,8 +123,8 @@ async function runMode(mode) {
       browser = await startChrome(profile, env, [`--load-extension=${extDir}`, `--disable-extensions-except=${extDir}`]);
       A = api(browser); worker = await A.worker();
       evidence.workerTarget = worker.target;
-      // A service-worker target can be announced before extension bindings exist.
-      // Observe readiness; do not interpret the first missing API as a product failure.
+      // The first run observed an announced worker with no chrome binding.
+      // Wait for observed API readiness without attributing its cause.
       await waitFor(() => A.evaluate(worker.sid, `typeof chrome !== 'undefined' && !!chrome.storage?.local && chrome.runtime?.id === '${extId}'`), { timeout: 20000, label: 'extension worker API bindings' });
       await A.evaluate(worker.sid, "chrome.storage.local.set({ab_stealth:true,ab_cursor:true})");
       await waitFor(() => fs.existsSync(path.join(env.CHROME_USE_RELAY_DIR, 'relay-cdp-url')), { timeout: 30000, label: 'extension relay' });
@@ -206,12 +206,67 @@ async function runMode(mode) {
     if (browser) await browser.close();
   }
 }
+// Protocol geometry observations run in a separate fixture tab after CLI tests.
+// No extension debugger owns this tab. Compare the renderer's frame-local DOM
+// rect with protocol quads before choosing a screenshot projection strategy.
+async function probeGeometry() {
+  const profile = path.join(work, 'geometry-profile');
+  fs.mkdirSync(profile, { recursive: true });
+  const browser = await startChrome(profile, {
+    PATH: process.env.PATH, DISPLAY: process.env.DISPLAY,
+    XAUTHORITY: process.env.XAUTHORITY || '', HOME: profile, LANG: 'en_US.UTF-8',
+  }, []);
+  try {
+    const { targetId } = await browser.send('Target.createTarget', { url });
+    const { sessionId } = await browser.send('Target.attachToTarget', { targetId, flatten: true });
+    const send = (method, params = {}, sid = sessionId) => browser.send(method, params, sid);
+    await send('Page.enable');
+    await waitFor(async () => (await send('Runtime.evaluate', { expression: 'document.readyState', returnByValue: true })).result.value === 'complete', { label: 'geometry fixture' });
+    const stages = [];
+    for (const scrollY of [0, 70]) {
+      await send('Runtime.evaluate', { expression: `scrollTo(0,${scrollY})` });
+      await send('Runtime.evaluate', { expression: 'new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))', awaitPromise: true });
+      const tree = (await send('Page.getFrameTree')).frameTree;
+      const contexts = [{ frame: tree.frame, sid: sessionId }];
+      for (const child of tree.childFrames || []) contexts.push({ frame: child.frame, sid: sessionId });
+      const targets = (await browser.send('Target.getTargets')).targetInfos.filter(t=>t.type==='iframe');
+      for (const t of targets) {
+        const { sessionId: sid } = await browser.send('Target.attachToTarget', { targetId: t.targetId, flatten: true });
+        const frame = (await send('Page.getFrameTree', {}, sid)).frameTree.frame;
+        const previous = contexts.findIndex(c=>c.frame.id===frame.id);
+        if (previous>=0) contexts.splice(previous,1);
+        contexts.push({ frame, sid });
+      }
+      const measurements = [];
+      for (const { frame, sid } of contexts) {
+        const { executionContextId } = await send('Page.createIsolatedWorld', { frameId: frame.id, worldName: 'geometry-probe' }, sid);
+        const object = (await send('Runtime.evaluate', { expression: 'document.querySelector("button")', contextId: executionContextId }, sid)).result;
+        if (!object.objectId) continue;
+        const { node } = await send('DOM.describeNode', { objectId: object.objectId }, sid);
+        const model = await send('DOM.getBoxModel', { backendNodeId: node.backendNodeId }, sid);
+        const rect = await send('Runtime.callFunctionOn', { objectId: object.objectId, functionDeclaration: 'function(){return this.getBoundingClientRect().toJSON()}', returnByValue: true }, sid);
+        let owner;
+        if (frame.id !== tree.frame.id) {
+          try {
+            const id = await send('DOM.getFrameOwner', { frameId: frame.id });
+            owner = await send('DOM.getBoxModel', { backendNodeId: id.backendNodeId });
+          } catch (error) { owner = { error: error.message }; }
+        }
+        measurements.push({ frame, oop: sid!==sessionId, backendNodeId: node.backendNodeId, model, rect: rect.result.value, owner });
+      }
+      stages.push({ scrollY, measurements });
+    }
+    fs.writeFileSync(path.join(outDir, 'geometry-probe.json'), JSON.stringify(stages,null,2));
+    return stages;
+  } finally { await browser.close(); }
+}
 try {
   evidence.version = (await execute(bin, ['--version'])).stdout.trim();
   for (const mode of ['launch', 'relay']) {
     try { await runMode(mode); }
     catch (error) { evidence.checks.push({ name: `${mode}: setup/teardown`, ok: false, error: error.stack }); console.log(`FAIL ${mode} setup: ${error.message}`); save(); }
   }
+  await check('frame protocol geometry observations', probeGeometry);
 } finally {
   site.close(); cross.close();
   for (const child of children) child.kill('SIGTERM');
