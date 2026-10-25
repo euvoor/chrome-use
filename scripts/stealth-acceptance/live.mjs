@@ -174,15 +174,15 @@ async function runMode(mode) {
       for (const [scale, scroll, frameScale] of [[1,0,1],[1,70,1],[2,70,1],[2,70,0.75]]) {
         await ok(['set','viewport','1000','700',String(scale)]);
         await evaluate(`document.querySelector('#cross').style.transformOrigin='top left';document.querySelector('#cross').style.transform='scale(${frameScale})';scrollTo(0,${scroll})`);
-        const expected = await evaluate(`(() => {
-          const rect = e => {const r=e.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}};
-          const local = rect(document.querySelector('#same').contentDocument.querySelector('button'));
-          return {scrollX,scrollY,viewportWidth:visualViewport.width,viewportHeight:visualViewport.height,
-            contentWidth:document.documentElement.scrollWidth,contentHeight:document.documentElement.scrollHeight,
-            target:rect(document.querySelector('#double')),
-            children:['same','cross'].map(id=>{const f=document.getElementById(id),r=rect(f),scale=r.width/f.offsetWidth;return {x:r.x+(f.clientLeft+local.x)*scale,y:r.y+(f.clientTop+local.y)*scale,width:local.width*scale,height:local.height*scale}})};
-        })()`);
         for (const [label, args] of [['viewport',[]],['full',['--full']],['selector',['--selector','#double']],['clip',['--clip','10,10,500,300']]]) {
+          const expected = await evaluate(`(() => {
+            const rect = e => {const r=e.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}};
+            const local = rect(document.querySelector('#same').contentDocument.querySelector('button'));
+            return {scrollX,scrollY,viewportWidth:visualViewport.width,viewportHeight:visualViewport.height,
+              contentWidth:document.documentElement.scrollWidth,contentHeight:document.documentElement.scrollHeight,
+              target:rect(document.querySelector('#double')),
+              children:['same','cross'].map(id=>{const f=document.getElementById(id),r=rect(f),scale=r.width/f.offsetWidth;return {x:r.x+(f.clientLeft+local.x)*scale,y:r.y+(f.clientTop+local.y)*scale,width:local.width*scale,height:local.height*scale}})};
+          })()`);
           await evaluate('audit.mutations=[]');
           const file = path.join(outDir, `${mode}-${label}-${scale}-${scroll}-${frameScale}.png`);
           const shot = await ok(['screenshot', file, '--annotate', ...args]);
@@ -198,9 +198,11 @@ async function runMode(mode) {
           const wanted = expected.children.filter(overlaps).map(r=>({x:Math.round(r.x-region.x),y:Math.round(r.y-region.y),width:Math.round(r.width),height:Math.round(r.height)})).sort((a,b)=>a.x-b.x);
           const actual = shot.annotations.filter(a=>['Same target','Cross target'].includes(a.name)).map(a=>a.box).sort((a,b)=>a.x-b.x);
           assert.deepEqual(actual,wanted,JSON.stringify({mode,label,scale,scroll,frameScale,shot}));
-          assert.ok(Math.abs(bytes.readUInt32BE(16)-region.width*scale)<=1,'PNG width matches CSS capture region and device scale');
-          assert.ok(Math.abs(bytes.readUInt32BE(20)-region.height*scale)<=1,'PNG height matches CSS capture region and device scale');
-          results.push({label,scale,scroll,frameScale,annotations:shot.annotations});
+          assert.ok(Math.abs(bytes.readUInt32BE(16)-region.width*scale)<=1,JSON.stringify({label,scale,scroll,frameScale,expectedWidth:region.width*scale,actualWidth:bytes.readUInt32BE(16)}));
+          assert.ok(Math.abs(bytes.readUInt32BE(20)-region.height*scale)<=1,JSON.stringify({label,scale,scroll,frameScale,expectedHeight:region.height*scale,actualHeight:bytes.readUInt32BE(20)}));
+          const observation = {mode,label,scale,scroll,frameScale,expected,region,raster:{width:bytes.readUInt32BE(16),height:bytes.readUInt32BE(20)},annotations:shot.annotations};
+          results.push(observation);
+          (evidence.captureObservations ??= []).push(observation); save();
         }
       }
       await evaluate("document.querySelector('#cross').style.transform='none';scrollTo(0,0)");
@@ -244,14 +246,18 @@ async function runMode(mode) {
         const tabs = await A.evaluate(worker.sid, 'chrome.tabs.query({})');
         const tab = tabs.find(t=>t.url===url); assert.ok(tab);
         const debug = (method, params={}) => A.evaluate(worker.sid, `chrome.debugger.sendCommand({tabId:${tab.id}},${JSON.stringify(method)},${JSON.stringify(params)})`);
-        const documentObject = (await debug('Runtime.evaluate',{expression:'document',returnByValue:false})).result.objectId;
-        const listeners = async () => (await debug('DOMDebugger.getEventListeners',{objectId:documentObject,depth:1,pierce:true})).listeners.filter(l=>['mousemove','mouseover'].includes(l.type)).map(l=>({type:l.type,useCapture:l.useCapture,scriptId:l.scriptId}));
-        const before = await listeners();
+        let windowObject;
+        const listeners = async () => (await debug('DOMDebugger.getEventListeners',{objectId:windowObject})).listeners.filter(l=>['pointermove','mousemove'].includes(l.type)).map(l=>({type:l.type,useCapture:l.useCapture,scriptId:l.scriptId}));
         await A.evaluate(worker.sid, `(() => {
           const original=chrome.debugger.sendCommand.bind(chrome.debugger);
           globalThis.stealthFixtureFault={original,triggered:false,release:null};
           chrome.debugger.sendCommand=async (...args)=>{
             const f=globalThis.stealthFixtureFault;
+            if(args[0]?.tabId===${tab.id} && args[1]==='Runtime.evaluate' && args[2]?.expression?.includes('const seen = { hit: null }')) {
+              const object=await original(args[0],'Runtime.evaluate',{expression:'window',contextId:args[2].contextId,returnByValue:false});
+              f.windowObject=object.result.objectId;
+              f.before=(await original(args[0],'DOMDebugger.getEventListeners',{objectId:f.windowObject})).listeners.filter(l=>['pointermove','mousemove'].includes(l.type)).map(l=>({type:l.type,useCapture:l.useCapture,scriptId:l.scriptId}));
+            }
             if(args[0]?.tabId===${tab.id} && args[1]==='Input.dispatchMouseEvent' && !f.triggered){
               f.triggered=true;await new Promise(resolve=>f.release=resolve);throw Error('fixture injected hover input rejection');
             }
@@ -262,6 +268,9 @@ async function runMode(mode) {
         try {
           operation = cli(['hover','90','40']);
           await waitFor(()=>A.evaluate(worker.sid,'stealthFixtureFault.triggered'),{timeout:5000,label:'hover fault interception'});
+          windowObject = await A.evaluate(worker.sid,'stealthFixtureFault.windowObject');
+          assert.ok(windowObject,'captured the recorder isolated-world window');
+          const before = await A.evaluate(worker.sid,'stealthFixtureFault.before');
           const during = await listeners();
           assert.equal(during.length,before.length+2,'positive control: inspector must observe both live recorder listeners');
           const released = Date.now();
@@ -276,7 +285,7 @@ async function runMode(mode) {
         } finally {
           await A.evaluate(worker.sid,'stealthFixtureFault.release?.();chrome.debugger.sendCommand=stealthFixtureFault.original;delete globalThis.stealthFixtureFault;true');
           if(operation) await operation.catch(()=>{});
-          await debug('Runtime.releaseObject',{objectId:documentObject}).catch(()=>{});
+          if(windowObject) await debug('Runtime.releaseObject',{objectId:windowObject}).catch(()=>{});
         }
       });
       await check('relay: background tab keeps the other tab active', async () => {
