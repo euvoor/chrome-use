@@ -95,9 +95,9 @@ jobs:
           else
             pnpm install --ignore-scripts --no-frozen-lockfile
           fi
-          node build.mjs
           cp pnpm-lock.yaml ../../../stealth-evidence/editor-pnpm-lock.yaml
           pnpm list --depth Infinity --json > ../../../stealth-evidence/editor-dependencies.json
+          node build.mjs
       - name: Run headed launch and real extension relay fixtures
         env:
           HOST_BIN: ${{ github.workspace }}/cli/target/ci/chrome-use
