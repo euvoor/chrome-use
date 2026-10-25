@@ -309,6 +309,8 @@ Prefer `snapshot -i -c` for compact controls, scoped reads for a known region, a
 
 After a successful trusted insertion, contenteditable `fill` keeps focus on the editor without synthetic `change` or `focusout` events. If read-back fails, it reports the failure instead of overwriting the editor DOM. Use the page's own save or commit action when needed.
 
+`screenshot --annotate` draws numbered labels into the captured image in the CLI, without inserting page nodes or styles. JSON annotation boxes remain capture-relative CSS pixels; labels scale to the image resolution. Explicit clips take precedence over full-page and selector captures.
+
 For Ant Design / rc-picker date ranges, fill the start bound and then the end bound. `fill` confirms each bound through the component's trusted keyboard or visible confirmation control and reads it back, instead of blurring and refocusing a draft. Focus follows the picker. Invalid, read-only or disabled controls fail without a synthetic overwrite; an unverified popup requires explicit picker interaction. Verify the final range before running the query.
 
 If only the post-action capture fails, `observed.refs` says what became of the refs: `kept-unverified` keeps the previous snapshot's refs, but each is confirmed live (same tab, frame, document and element) before a later command uses it and refused otherwise, never re-anchored by role or name (DOM-walk refs are always refused then); `dropped` means the document may have changed. Either way, run `snapshot -i` and do not repeat the action.
