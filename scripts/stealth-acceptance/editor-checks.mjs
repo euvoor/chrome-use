@@ -16,16 +16,21 @@ async function grantOnLaunchedBrowser(profile, origin) {
       socket.onmessage=event=>{const message=JSON.parse(event.data);if(message.id!==id)return;clearTimeout(timer);message.error?reject(Error(message.error.message)):resolve(message.result);};
       socket.send(JSON.stringify({id,method,params}));
     });
-    await send('Browser.grantPermissions',{origin,permissions:['clipboardReadWrite','clipboardSanitizedWrite']});
     const {targetInfos}=await send('Target.getTargets',{});
     const tab=targetInfos.find(t=>t.type==='page'&&t.url.startsWith(origin+'/editors/'));
     assert.ok(tab,'owned launched fixture target exists');
+    await send('Browser.grantPermissions',{origin,permissions:['clipboardReadWrite','clipboardSanitizedWrite'],...(tab.browserContextId?{browserContextId:tab.browserContextId}:{})});
     await send('Target.activateTarget',{targetId:tab.targetId});
-  } finally { socket.close(); }
+    // BrowserHandler::Disable resets this connection's permission overrides.
+    // Keep the browser CDP connection alive until clipboard acceptance ends.
+    return {target:tab,close:()=>socket.close()};
+  } catch(error) {socket.close();throw error;}
 }
 
 export async function checkEditors({mode,profile,url,ok,cli,evaluate,check,browser,A,worker,evidence,save}) {
   const editorUrl = `${url}editors/`;
+  let launchPermissions;
+  try {
   await ok(['open',editorUrl]);
   await waitFor(()=>evaluate('!!window.fixture?.ready'),{timeout:30000,label:'actual editor packages ready'});
   for(const [name,selector] of [['lexical','#lexical'],['prosemirror','#prosemirror .ProseMirror']]) {
@@ -52,7 +57,10 @@ export async function checkEditors({mode,profile,url,ok,cli,evaluate,check,brows
       await browser.send('Browser.grantPermissions',{origin:new URL(url).origin,permissions:['clipboardReadWrite','clipboardSanitizedWrite']});
       const tab=(await A.evaluate(worker.sid,'chrome.tabs.query({})')).find(t=>t.url===editorUrl);assert.ok(tab);
       await A.evaluate(worker.sid,`chrome.tabs.update(${tab.id},{active:true}).then(()=>chrome.windows.update(${tab.windowId},{focused:true}))`);
-    } else await grantOnLaunchedBrowser(profile,new URL(url).origin);
+    } else launchPermissions=await grantOnLaunchedBrowser(profile,new URL(url).origin);
+    const permission=await evaluate("navigator.permissions.query({name:'clipboard-read'}).then(p=>p.state)");
+    (evidence.clipboardPermissions??=[]).push({mode,state:permission,target:launchPermissions?.target});save();
+    assert.equal(permission,'granted','owned fixture has a live clipboard permission override');
     const apiVisibility=await evaluate("({monacoTag:window.monaco?.tagName,hasEditorAPI:!!window.monaco?.editor,requireType:typeof window.require})");
     // A div with id=monaco can create a named window property without exposing
     // any editor API. Check the mechanism the production resolver uses.
@@ -151,4 +159,5 @@ export async function checkEditors({mode,profile,url,ok,cli,evaluate,check,brows
       return record;
     });
   }
+  } finally {launchPermissions?.close();}
 }
