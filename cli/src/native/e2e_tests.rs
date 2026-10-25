@@ -22,6 +22,9 @@ mod contenteditable_stealth;
 #[path = "screenshot_annotation_e2e_tests.rs"]
 mod screenshot_annotation;
 
+#[path = "double_click_e2e_tests.rs"]
+mod double_click;
+
 #[path = "range_date_e2e_tests.rs"]
 mod range_date;
 
