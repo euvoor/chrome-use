@@ -1,0 +1,107 @@
+name: Stealth acceptance (fork validation)
+
+on:
+  push:
+    branches: [review/stealth-audit-integration]
+    paths:
+      - '.github/workflows/stealth-acceptance.yml'
+      - 'scripts/stealth-acceptance/**'
+      - 'cli/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  headed:
+    if: github.repository == 'euvoor/chrome-use'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: cli
+          shared-key: linux-ci
+      - name: Build tested CLI
+        run: cargo build --locked --profile ci --manifest-path cli/Cargo.toml
+      - name: Prepare virtual display and Chrome sandbox support
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          # The temporary CfT path is not in Ubuntu's packaged Chrome profile.
+          # Permit user namespaces in this disposable VM; do not disable Chrome's sandbox.
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - name: Download Chrome for Testing from its official release index
+        shell: python
+        run: |
+          import hashlib, json, os, pathlib, urllib.request, urllib.parse, zipfile
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'stealth-cft'
+          root.mkdir()
+          index_url = 'https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json'
+          with urllib.request.urlopen(index_url, timeout=30) as response:
+              stable = json.load(response)['channels']['Stable']
+          url = next(item['url'] for item in stable['downloads']['chrome'] if item['platform'] == 'linux64')
+          parsed = urllib.parse.urlparse(url)
+          assert parsed.scheme == 'https' and parsed.hostname == 'storage.googleapis.com'
+          archive = root / 'chrome.zip'
+          urllib.request.urlretrieve(url, archive)
+          with zipfile.ZipFile(archive) as bundle:
+              for item in bundle.infolist():
+                  assert (root / item.filename).resolve().is_relative_to(root.resolve())
+                  bundle.extract(item, root)
+                  mode = item.external_attr >> 16
+                  if mode:
+                      (root / item.filename).chmod(mode)
+          chrome = root / 'chrome-linux64/chrome'
+          chrome.chmod(0o755)
+          evidence = pathlib.Path('stealth-evidence')
+          evidence.mkdir()
+          (evidence / 'browser-download.json').write_text(json.dumps({'version': stable['version'], 'url': url, 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest()}, indent=2))
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write(f'CHROME={chrome}\n')
+      - name: Run headed launch and real extension relay fixtures
+        env:
+          HOST_BIN: ${{ github.workspace }}/cli/target/ci/chrome-use
+          ACCEPT_OUT: ${{ github.workspace }}/stealth-evidence
+        run: xvfb-run -a -s '-screen 0 1440x1000x24' node scripts/stealth-acceptance/live.mjs
+      - name: Preserve evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: stealth-headed-${{ github.sha }}
+          path: stealth-evidence
+          if-no-files-found: warn
+
+  windows-custody-control:
+    if: github.repository == 'euvoor/chrome-use'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        revision: [02b0197198a182c9f552d2499954da7d7d890aa0, combined]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ matrix.revision == 'combined' && github.sha || matrix.revision }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: cli
+          shared-key: windows-custody-control
+      - name: Reproduce process custody timeout on baseline and combined source
+        run: cargo test --locked --profile ci --manifest-path cli/Cargo.toml job_contains_descendants_before_the_leader_runs_and_confirms_their_exit -- --nocapture
