@@ -8,6 +8,7 @@ import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 import { waitFor, api } from '../inspect-acceptance/lib.mjs';
+import { checkEditors } from './editor-checks.mjs';
 
 assert.equal(process.env.GITHUB_ACTIONS, 'true', 'this rig is CI-only');
 assert.equal(process.env.RUNNER_ENVIRONMENT, 'github-hosted', 'use a disposable GitHub runner');
@@ -17,6 +18,8 @@ const execute = promisify(execFile);
 const bin = path.resolve(process.env.HOST_BIN);
 const chrome = path.resolve(process.env.CHROME);
 const extDir = path.resolve('extensions/ab-connect');
+const editorMode = process.env.STEALTH_EDITORS === '1';
+const editorDist = process.env.EDITOR_DIST && path.resolve(process.env.EDITOR_DIST);
 const extId = 'ciiljdlhdpfckdcfkphgmfalanpdejep';
 const work = fs.mkdtempSync(path.join(process.env.RUNNER_TEMP, 'stealth-accept-'));
 const outDir = path.resolve(process.env.ACCEPT_OUT || 'stealth-evidence');
@@ -52,7 +55,16 @@ audit.baseline=Object.getOwnPropertyNames(window);
 const child = name => `<!doctype html><style>button{width:100px;height:30px}</style><button id="child">${name}</button><script>window.events=[];for(const type of ['mousedown','mouseup','click','dblclick'])document.querySelector('button').addEventListener(type,e=>{const event={name:'${name}',type,trusted:e.isTrusted,detail:e.detail};events.push(event);parent.postMessage({fixtureEvent:event},'*')});</script>`;
 const serve = handler => new Promise(resolve => { const s = http.createServer(handler); s.listen(0, () => resolve(s)); });
 const cross = await serve((req, res) => { res.setHeader('Content-Type', 'text/html'); res.end(child("Cross target")); });
-const site = await serve((req, res) => { res.setHeader('Content-Type', 'text/html'); res.end(req.url === '/child' ? child('Same target') : fixture(cross.address().port)); });
+const site = await serve((req, res) => {
+  if(editorMode && req.url.startsWith('/editors/')) {
+    const requested=decodeURIComponent(req.url.split('?')[0].slice('/editors/'.length)) || 'index.html';
+    const file=path.resolve(editorDist,requested);
+    if(!file.startsWith(editorDist+path.sep)||!fs.existsSync(file)||!fs.statSync(file).isFile()){res.writeHead(404);res.end();return;}
+    res.setHeader('Content-Type',({'.html':'text/html','.js':'text/javascript','.css':'text/css','.ttf':'font/ttf'})[path.extname(file)]||'application/octet-stream');
+    res.end(fs.readFileSync(file));return;
+  }
+  res.setHeader('Content-Type','text/html');res.end(req.url==='/child'?child('Same target'):fixture(cross.address().port));
+});
 const url = `http://127.0.0.1:${site.address().port}/`;
 const children = [];
 
@@ -99,7 +111,7 @@ async function runMode(mode) {
   const session = `stealth-${mode}`;
   let browser, worker, A;
   const cli = async args => {
-    const command = ['--session', session, '--json', ...(mode === 'launch' ? ['--launch'] : []), ...args];
+    const command = ['--session', session, '--json', ...(mode === 'launch' ? ['--launch',...(editorMode?['--profile',profile]:[])] : []), ...args];
     let result;
     try { result = await execute(bin, command, { env, timeout: 60000, maxBuffer: 16 * 1024 * 1024 }); }
     catch (error) { result = error; }
@@ -139,6 +151,10 @@ async function runMode(mode) {
           catch(error){record.error=error.message;throw error;}
         };return true;
       })()`);
+    }
+    if(editorMode) {
+      await checkEditors({mode,profile,url,ok,cli,evaluate,check,browser,A,worker,evidence,save});
+      return;
     }
     await ok(['open', url]);
     await waitFor(async () => (await evaluate('document.readyState')) === 'complete', { timeout: 30000, label: 'fixture ready' });
@@ -430,7 +446,7 @@ try {
     try { await runMode(mode); }
     catch (error) { evidence.checks.push({ name: `${mode}: setup/teardown`, ok: false, error: error.stack }); console.log(`FAIL ${mode} setup: ${error.message}`); save(); }
   }
-  await check('frame protocol geometry observations', probeGeometry);
+  if(!editorMode) await check('frame protocol geometry observations', probeGeometry);
 } finally {
   site.close(); cross.close();
   for (const child of children) child.kill('SIGTERM');

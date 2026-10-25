@@ -13,6 +13,10 @@ on:
         description: Run only the permanent screenshot E2E regression
         type: boolean
         default: false
+      editors_only:
+        description: Run actual editor package acceptance on disposable profiles
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -29,6 +33,11 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .node-version
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        if: inputs.editors_only
+        with:
+          version: 11.1.3
+          run_install: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
@@ -75,10 +84,26 @@ jobs:
           (evidence / 'browser-download.json').write_text(json.dumps({'version': stable['version'], 'url': url, 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest()}, indent=2))
           with open(os.environ['GITHUB_ENV'], 'a') as output:
               output.write(f'CHROME={chrome}\n')
+      - name: Install and bundle real editor fixtures without dependency install scripts
+        if: inputs.editors_only
+        working-directory: scripts/stealth-acceptance/editors
+        env:
+          EDITOR_DIST: ${{ runner.temp }}/stealth-editor-dist
+        run: |
+          if test -f pnpm-lock.yaml; then
+            pnpm install --ignore-scripts --frozen-lockfile
+          else
+            pnpm install --ignore-scripts --no-frozen-lockfile
+          fi
+          node build.mjs
+          cp pnpm-lock.yaml ../../../stealth-evidence/editor-pnpm-lock.yaml
+          pnpm list --depth Infinity --json > ../../../stealth-evidence/editor-dependencies.json
       - name: Run headed launch and real extension relay fixtures
         env:
           HOST_BIN: ${{ github.workspace }}/cli/target/ci/chrome-use
           ACCEPT_OUT: ${{ github.workspace }}/stealth-evidence
+          STEALTH_EDITORS: ${{ inputs.editors_only && '1' || '0' }}
+          EDITOR_DIST: ${{ runner.temp }}/stealth-editor-dist
         run: xvfb-run -a -s '-screen 0 1440x1000x24' node scripts/stealth-acceptance/live.mjs
       - name: Preserve evidence even on failure
         if: always()
@@ -89,7 +114,7 @@ jobs:
           if-no-files-found: warn
 
   windows-custody-control:
-    if: github.repository == 'euvoor/chrome-use' && github.event_name == 'workflow_dispatch' && !inputs.annotation_only
+    if: github.repository == 'euvoor/chrome-use' && github.event_name == 'workflow_dispatch' && !inputs.annotation_only && !inputs.editors_only
     runs-on: windows-latest
     timeout-minutes: 15
     strategy:
