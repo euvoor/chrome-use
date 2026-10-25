@@ -17,6 +17,10 @@ on:
         description: Run actual editor package acceptance on disposable profiles
         type: boolean
         default: false
+      benchmark_only:
+        description: Compare public detectors on audited base and combined source
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -25,7 +29,7 @@ jobs:
   headed:
     if: github.repository == 'euvoor/chrome-use' && !inputs.annotation_only
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: ${{ inputs.benchmark_only && 45 || 25 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -47,6 +51,20 @@ jobs:
           shared-key: linux-ci
       - name: Build tested CLI
         run: cargo build --locked --profile ci --manifest-path cli/Cargo.toml
+      - name: Preserve combined binary for benchmark comparison
+        if: inputs.benchmark_only
+        run: cp cli/target/ci/chrome-use "$RUNNER_TEMP/chrome-use-combined"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        if: inputs.benchmark_only
+        with:
+          ref: 02b0197198a182c9f552d2499954da7d7d890aa0
+          path: stealth-baseline
+          persist-credentials: false
+      - name: Build audited baseline for benchmark comparison
+        if: inputs.benchmark_only
+        run: |
+          cargo build --locked --profile ci --manifest-path stealth-baseline/cli/Cargo.toml --target-dir cli/target
+          cp cli/target/ci/chrome-use "$RUNNER_TEMP/chrome-use-base"
       - name: Prepare virtual display and Chrome sandbox support
         run: |
           sudo apt-get update
@@ -99,12 +117,32 @@ jobs:
           pnpm list --depth Infinity --json > ../../../stealth-evidence/editor-dependencies.json
           node build.mjs
       - name: Run headed launch and real extension relay fixtures
+        if: ${{ !inputs.benchmark_only }}
         env:
           HOST_BIN: ${{ github.workspace }}/cli/target/ci/chrome-use
           ACCEPT_OUT: ${{ github.workspace }}/stealth-evidence
           STEALTH_EDITORS: ${{ inputs.editors_only && '1' || '0' }}
           EDITOR_DIST: ${{ runner.temp }}/stealth-editor-dist
         run: xvfb-run -a -s '-screen 0 1440x1000x24' node scripts/stealth-acceptance/live.mjs
+      - name: Compare existing public benchmark on the same hosted machine
+        if: inputs.benchmark_only
+        env:
+          STEALTH_BENCH: '1'
+        run: |
+          failed=0
+          for revision in base combined; do
+            if test "$revision" = base; then
+              source_revision=02b0197198a182c9f552d2499954da7d7d890aa0
+              extension_path="$GITHUB_WORKSPACE/stealth-baseline/extensions/ab-connect"
+            else
+              source_revision="$GITHUB_SHA"
+              extension_path="$GITHUB_WORKSPACE/extensions/ab-connect"
+            fi
+            if ! HOST_BIN="$RUNNER_TEMP/chrome-use-$revision" BINARY_SOURCE_REVISION="$source_revision" EXT_DIR="$extension_path" ACCEPT_OUT="$GITHUB_WORKSPACE/stealth-evidence/$revision" xvfb-run -a -s '-screen 0 1440x1000x24' node scripts/stealth-acceptance/live.mjs; then
+              failed=1
+            fi
+          done
+          exit "$failed"
       - name: Preserve evidence even on failure
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -114,7 +152,7 @@ jobs:
           if-no-files-found: warn
 
   windows-custody-control:
-    if: github.repository == 'euvoor/chrome-use' && github.event_name == 'workflow_dispatch' && !inputs.annotation_only && !inputs.editors_only
+    if: github.repository == 'euvoor/chrome-use' && github.event_name == 'workflow_dispatch' && !inputs.annotation_only && !inputs.editors_only && !inputs.benchmark_only
     runs-on: windows-latest
     timeout-minutes: 15
     strategy:

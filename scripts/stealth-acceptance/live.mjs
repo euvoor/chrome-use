@@ -17,8 +17,10 @@ assert.notEqual(process.getuid(), 0, 'Chrome must run as a non-root user');
 const execute = promisify(execFile);
 const bin = path.resolve(process.env.HOST_BIN);
 const chrome = path.resolve(process.env.CHROME);
-const extDir = path.resolve('extensions/ab-connect');
+const extDir = path.resolve(process.env.EXT_DIR || 'extensions/ab-connect');
 const editorMode = process.env.STEALTH_EDITORS === '1';
+const benchmarkMode = process.env.STEALTH_BENCH === '1';
+assert.ok(!(editorMode && benchmarkMode),'choose one acceptance matrix');
 const editorDist = process.env.EDITOR_DIST && path.resolve(process.env.EDITOR_DIST);
 const extId = 'ciiljdlhdpfckdcfkphgmfalanpdejep';
 const work = fs.mkdtempSync(path.join(process.env.RUNNER_TEMP, 'stealth-accept-'));
@@ -26,6 +28,7 @@ const outDir = path.resolve(process.env.ACCEPT_OUT || 'stealth-evidence');
 fs.mkdirSync(outDir, { recursive: true });
 const evidence = {
   commit: process.env.GITHUB_SHA,
+  binarySourceRevision: process.env.BINARY_SOURCE_REVISION || process.env.GITHUB_SHA,
   binarySha256: createHash('sha256').update(fs.readFileSync(bin)).digest('hex'),
   extensionVersion: JSON.parse(fs.readFileSync(path.join(extDir, 'manifest.json'))).version,
   runner: process.env.RUNNER_OS, work, checks: [], modes: [],
@@ -142,7 +145,7 @@ async function runMode(mode) {
       await A.evaluate(worker.sid, "chrome.storage.local.set({ab_stealth:true,ab_cursor:true})");
       await waitFor(() => fs.existsSync(path.join(env.CHROME_USE_RELAY_DIR, 'relay-cdp-url')), { timeout: 30000, label: 'extension relay' });
       evidence.modes.push({ mode, chrome: browser.version, stealth: await A.evaluate(worker.sid, "chrome.storage.local.get(['ab_stealth','ab_cursor'])") });
-      await A.evaluate(worker.sid,`(() => {
+      if(!benchmarkMode) await A.evaluate(worker.sid,`(() => {
         const original=chrome.debugger.sendCommand.bind(chrome.debugger);globalThis.stealthCaptureTrace=[];
         chrome.debugger.sendCommand=async (...args)=>{
           if(args[1]!=='Page.captureScreenshot')return original(...args);
@@ -151,6 +154,23 @@ async function runMode(mode) {
           catch(error){record.error=error.message;throw error;}
         };return true;
       })()`);
+    }
+    if(benchmarkMode) {
+      await check(`${mode}: existing public stealth benchmark`,async()=>{
+        const wrapper=path.join(work,mode,'bench-cli.sh');
+        const quote=value=>"'"+String(value).replaceAll("'","'\\''")+"'";
+        fs.writeFileSync(wrapper,`#!/bin/sh\nexec ${quote(process.execPath)} ${quote(path.resolve('scripts/stealth-acceptance/bench-command.mjs'))} ${quote(bin)} "$@"\n`,{mode:0o700});
+        const benchEnv={...env,CHROME_USE:wrapper,BENCH_COMMAND_LOG:path.join(outDir,`${mode}-commands.jsonl`)};
+        let result;
+        try { result=await execute('bash',['scripts/stealth-bench.sh',`--${mode}`],{env:benchEnv,timeout:900000,maxBuffer:16*1024*1024}); }
+        catch(error){result=error;}
+        fs.writeFileSync(path.join(outDir,`${mode}-benchmark.log`),String(result.stdout||'')+'\n'+String(result.stderr||''));
+        const status=result.code===undefined?0:result.code;
+        (evidence.benchmarks??=[]).push({mode,status,log:`${mode}-benchmark.log`,commandLog:`${mode}-commands.jsonl`});save();
+        assert.equal(status,0,`public detector benchmark exited ${status}; inspect raw results and baseline before attributing a regression`);
+        return {status};
+      });
+      return;
     }
     if(editorMode) {
       await checkEditors({mode,profile,url,ok,cli,evaluate,check,browser,A,worker,evidence,save});
@@ -382,7 +402,7 @@ async function runMode(mode) {
       });
     }
   } finally {
-    await cli(['close']).catch(() => {});
+    if(!benchmarkMode) await cli(['close']).catch(() => {});
     if (browser) await browser.close();
   }
 }
@@ -446,7 +466,7 @@ try {
     try { await runMode(mode); }
     catch (error) { evidence.checks.push({ name: `${mode}: setup/teardown`, ok: false, error: error.stack }); console.log(`FAIL ${mode} setup: ${error.message}`); save(); }
   }
-  if(!editorMode) await check('frame protocol geometry observations', probeGeometry);
+  if(!editorMode && !benchmarkMode) await check('frame protocol geometry observations', probeGeometry);
 } finally {
   site.close(); cross.close();
   for (const child of children) child.kill('SIGTERM');
