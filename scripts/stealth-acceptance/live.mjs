@@ -168,17 +168,41 @@ async function runMode(mode) {
       assert.ok(!observed.events.some(e=>!e.trusted||e.type==='change'||e.type==='focusout'));
       return { response, observed };
     });
-    await check(`${mode}: screenshot annotations leave no DOM mutations`, async () => {
+    await check(`${mode}: screenshot frame geometry, scale, scroll and DOM mutations`, async () => {
       const results = [];
-      for (const [label, args] of [['viewport',[]],['full',['--full']],['selector',['--selector','#double']],['clip',['--clip','10,10,500,300']]]) {
-        await evaluate('audit.mutations=[]');
-        const file = path.join(outDir, `${mode}-${label}.png`);
-        const shot = await ok(['screenshot', file, '--annotate', ...args]);
-        assert.ok(fs.statSync(file).size > 100);
-        assert.ok(Array.isArray(shot.annotations) && shot.annotations.length > 0, JSON.stringify(shot));
-        assert.deepEqual(await evaluate('audit.mutations'), []);
-        results.push({ label, annotations: shot.annotations });
+      for (const [scale, scroll, frameScale] of [[1,0,1],[1,70,1],[2,70,1],[2,70,0.75]]) {
+        await ok(['set','viewport','1000','700',String(scale)]);
+        await evaluate(`document.querySelector('#cross').style.transformOrigin='top left';document.querySelector('#cross').style.transform='scale(${frameScale})';scrollTo(0,${scroll})`);
+        const expected = await evaluate(`(() => {
+          const rect = e => {const r=e.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}};
+          const local = rect(document.querySelector('#same').contentDocument.querySelector('button'));
+          return {scrollX,scrollY,viewportWidth:visualViewport.width,viewportHeight:visualViewport.height,
+            contentWidth:document.documentElement.scrollWidth,contentHeight:document.documentElement.scrollHeight,
+            target:rect(document.querySelector('#double')),
+            children:['same','cross'].map(id=>{const f=document.getElementById(id),r=rect(f),scale=r.width/f.offsetWidth;return {x:r.x+(f.clientLeft+local.x)*scale,y:r.y+(f.clientTop+local.y)*scale,width:local.width*scale,height:local.height*scale}})};
+        })()`);
+        for (const [label, args] of [['viewport',[]],['full',['--full']],['selector',['--selector','#double']],['clip',['--clip','10,10,500,300']]]) {
+          await evaluate('audit.mutations=[]');
+          const file = path.join(outDir, `${mode}-${label}-${scale}-${scroll}-${frameScale}.png`);
+          const shot = await ok(['screenshot', file, '--annotate', ...args]);
+          const bytes = fs.readFileSync(file);
+          assert.ok(bytes.length > 100);
+          assert.ok(Array.isArray(shot.annotations) && shot.annotations.length > 0, JSON.stringify(shot));
+          assert.deepEqual(await evaluate('audit.mutations'), []);
+          const region = label==='viewport' ? {x:0,y:0,width:expected.viewportWidth,height:expected.viewportHeight}
+            : label==='full' ? {x:-expected.scrollX,y:-expected.scrollY,width:expected.contentWidth,height:expected.contentHeight}
+            : label==='selector' ? expected.target
+            : {x:10-expected.scrollX,y:10-expected.scrollY,width:500,height:300};
+          const overlaps = r => r.x<region.x+region.width && r.x+r.width>region.x && r.y<region.y+region.height && r.y+r.height>region.y;
+          const wanted = expected.children.filter(overlaps).map(r=>({x:Math.round(r.x-region.x),y:Math.round(r.y-region.y),width:Math.round(r.width),height:Math.round(r.height)})).sort((a,b)=>a.x-b.x);
+          const actual = shot.annotations.filter(a=>a.name==='Child target').map(a=>a.box).sort((a,b)=>a.x-b.x);
+          assert.deepEqual(actual,wanted,JSON.stringify({mode,label,scale,scroll,frameScale,shot}));
+          assert.ok(Math.abs(bytes.readUInt32BE(16)-region.width*scale)<=1,'PNG width matches CSS capture region and device scale');
+          assert.ok(Math.abs(bytes.readUInt32BE(20)-region.height*scale)<=1,'PNG height matches CSS capture region and device scale');
+          results.push({label,scale,scroll,frameScale,annotations:shot.annotations});
+        }
       }
+      await evaluate("document.querySelector('#cross').style.transform='none';scrollTo(0,0)");
       return results;
     });
     await check(`${mode}: coordinate hover adds no page globals or persistent overlay`, async () => {
