@@ -92,6 +92,24 @@ export async function checkEditors({mode,profile,url,ok,cli,evaluate,check,brows
     assert.deepEqual(observed.errors,[]);
     return record;
   });
+  await check(`${mode}: real Monaco highlighted code preserves clipboard HTML`,async()=>{
+    await evaluate("fixture.language('javascript');fixture.events.length=0");
+    await evaluate(`navigator.clipboard.write([new ClipboardItem({'text/plain':new Blob(['highlight backup'],{type:'text/plain'}),'text/html':new Blob(['<b>highlight backup</b>'],{type:'text/html'})})])`);
+    const before=await evaluate('fixture.clipboard()');
+    const value='const greeting = "你好";\nconsole.log(greeting);';
+    const response=await cli(['fill','#monaco',value]);
+    const observed=await evaluate("({model:fixture.read('monaco'),events:fixture.events.filter(e=>e.editor==='monaco')})");
+    const after=await evaluate('fixture.clipboard()');
+    const rawAfter=await evaluate("(async()=>Promise.all((await navigator.clipboard.read({unsanitized:['text/html']})).map(async item=>Object.fromEntries(await Promise.all(item.types.map(async type=>[type,await(await item.getType(type)).text()]))))))()");
+    const record={mode,language:'javascript',value,response,observed,before,after,rawAfter};
+    (evidence.editorObservations??=[]).push(record);save();
+    await evaluate("fixture.language('plaintext')");
+    assert.equal(response.success,true,JSON.stringify(record));
+    assert.equal(observed.model,value);
+    assert.deepEqual(after,before);
+    assert.ok(observed.events.some(e=>e.phase==='bubble'&&e.formats.some(([type])=>type==='text/html')),'positive control: editor generated HTML');
+    return record;
+  });
   for (const fault of ['backup','focus','restore']) {
     await check(`${mode}: real Monaco ${fault} failure has explicit outcome and cleanup`,async()=>{
       await evaluate(`navigator.clipboard.write([new ClipboardItem({'text/plain':new Blob(['fault backup'],{type:'text/plain'}),'text/html':new Blob(['<b>fault backup</b>'],{type:'text/html'})})])`);

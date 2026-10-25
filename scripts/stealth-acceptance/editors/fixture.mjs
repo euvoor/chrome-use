@@ -44,6 +44,7 @@ const code = monaco.editor.create(document.getElementById('monaco'), {
   // Monaco also supports EditContext; that distinct input path is not claimed.
   editContext: false, minimap: { enabled: false },
 });
+window.fixture.language = name => monaco.editor.setModelLanguage(code.getModel(), name);
 window.fixture.read = name => {
   if (name === 'lexical') return lexical.getEditorState().read(() => $getRoot().getTextContent());
   if (name === 'prosemirror') return prose.state.doc.textBetween(0, prose.state.doc.content.size, '\n');
