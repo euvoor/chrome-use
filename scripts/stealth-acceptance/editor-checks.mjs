@@ -54,13 +54,18 @@ export async function checkEditors({mode,profile,url,ok,cli,evaluate,check,brows
     await waitFor(()=>evaluate('document.hasFocus()'),{timeout:5000,label:'disposable editor page has clipboard focus'});
     assert.equal(await evaluate("!!document.querySelector('#monaco textarea.inputarea')"),true,'textarea input mode');
     await evaluate(`navigator.clipboard.write([new ClipboardItem({'text/plain':new Blob(['fixture clipboard sentinel'],{type:'text/plain'}),'text/html':new Blob(['<b>fixture clipboard sentinel</b>'],{type:'text/html'})})])`);
-    const before=await evaluate('fixture.clipboard()');
+    const control=await evaluate('fixture.clipboardControl().catch(error=>({error:String(error)}))');
+    (evidence.clipboardControls??=[]).push({mode,control});save();
+    // Reset the sentinel after the independent ClipboardItem control.
+    await evaluate(`navigator.clipboard.write([new ClipboardItem({'text/plain':new Blob(['fixture clipboard sentinel'],{type:'text/plain'}),'text/html':new Blob(['<b>fixture clipboard sentinel</b>'],{type:'text/html'})})])`);
+    const before=await evaluate('fixture.clipboard().catch(error=>({error:String(error)}))');
     await evaluate('fixture.events.length=0');
     const value='first line\n  second line\nthird line';
     const response=await cli(['fill','#monaco',value]);
     const observed=await evaluate("({model:fixture.read('monaco'),events:fixture.events.filter(e=>e.editor==='monaco'),errors:fixture.errors})");
-    const after=await evaluate('fixture.clipboard()');
-    const record={value,apiVisibility,response,observed,before,after};(evidence.editorObservations??=[]).push(record);save();
+    const after=await evaluate('fixture.clipboard().catch(error=>({error:String(error)}))');
+    const clipboardCalls=await evaluate('fixture.clipboardCalls');
+    const record={value,apiVisibility,response,observed,before,after,clipboardCalls};(evidence.editorObservations??=[]).push(record);save();
     assert.equal(response.success,true,JSON.stringify(record));
     assert.equal(response.data.engine,'monaco-clipboard');
     assert.equal(observed.model,value);

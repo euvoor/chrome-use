@@ -10,16 +10,16 @@ import * as monaco from 'monaco-editor';
 
 const events = [], errors = [];
 window.fixture = { events, errors, ready: false };
-for (const type of ['beforeinput','input','change','focusout','paste','copy']) {
+for (const type of ['beforeinput','input','change','focusout','paste','copy','keydown','keyup']) {
   document.addEventListener(type, event => {
     const container = event.target.closest('#lexical,#prosemirror,#monaco');
     if (!container) return;
-    const record = { editor: container.id, type, trusted: event.isTrusted,
+    const record = { editor: container.id, type, trusted: event.isTrusted, key: event.key,
       formats: event.clipboardData ? [...event.clipboardData.types] : [] };
     if (type === 'paste' || type === 'copy') record.exposedState = [...document.querySelectorAll('#monaco,#monaco *')]
       .flatMap(node => Object.getOwnPropertyNames(node).filter(name => name.startsWith('__chromeUseMonaco')));
     queueMicrotask(() => { record.prevented = event.defaultPrevented; events.push(record); });
-  }, !['paste','copy'].includes(type));
+  }, true);
 }
 
 const lexical = createEditor({ namespace: 'stealth-fixture', onError: error => errors.push(String(error)) });
@@ -44,6 +44,29 @@ window.fixture.read = name => {
   if (name === 'monaco') return code.getValue();
   throw Error('unknown fixture');
 };
-window.fixture.clipboard = async () => Promise.all((await navigator.clipboard.read()).map(async item =>
-  Promise.all([...item.types].sort().map(async type => [type, [...new Uint8Array(await (await item.getType(type)).arrayBuffer())]]))));
+const bounded = (promise, step) => Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(Error('clipboard timeout: '+step)), 5000))]);
+const clipboardBytes = async items => Promise.all(items.map(async item =>
+  Promise.all([...item.types].sort().map(async type => [type, [...new Uint8Array(await bounded((await bounded(item.getType(type), 'getType '+type)).arrayBuffer(), 'bytes '+type))]]))));
+window.fixture.clipboard = async () => clipboardBytes(await bounded(navigator.clipboard.read(), 'read'));
+window.fixture.clipboardControl = async () => {
+  const old = await bounded(navigator.clipboard.read(), 'control read');
+  const before = await clipboardBytes(old);
+  await bounded(navigator.clipboard.writeText('clipboard control temporary'), 'control stage');
+  const oldAfterWrite = await clipboardBytes(old);
+  await bounded(navigator.clipboard.write(old), 'control restore');
+  return {before, oldAfterWrite, after: await window.fixture.clipboard()};
+};
+// Record the real package's Clipboard API calls separately from DOM events.
+window.fixture.clipboardCalls = [];
+for (const name of ['read','write','readText','writeText']) {
+  const original = navigator.clipboard[name].bind(navigator.clipboard);
+  navigator.clipboard[name] = async (...args) => {
+    const record = {name, started: performance.now(), stack: new Error().stack};
+    window.fixture.clipboardCalls.push(record);
+    try { const result = await original(...args); record.finished=performance.now();
+      if(name === 'read') record.types=result.map(item=>[...item.types]);
+      return result;
+    } catch(error) { record.error=String(error); throw error; }
+  };
+}
 window.fixture.ready = true;
