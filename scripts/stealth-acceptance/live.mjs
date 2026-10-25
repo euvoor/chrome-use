@@ -122,6 +122,10 @@ async function runMode(mode) {
       fs.writeFileSync(path.join(profile, 'NativeMessagingHosts', 'com.agent_browser.connect.json'), JSON.stringify({ name: 'com.agent_browser.connect', description: 'isolated stealth acceptance', path: wrapper, type: 'stdio', allowed_origins: [`chrome-extension://${extId}/`] }));
       browser = await startChrome(profile, env, [`--load-extension=${extDir}`, `--disable-extensions-except=${extDir}`]);
       A = api(browser); worker = await A.worker();
+      evidence.workerTarget = worker.target;
+      // A service-worker target can be announced before extension bindings exist.
+      // Observe readiness; do not interpret the first missing API as a product failure.
+      await waitFor(() => A.evaluate(worker.sid, `typeof chrome !== 'undefined' && !!chrome.storage?.local && chrome.runtime?.id === '${extId}'`), { timeout: 20000, label: 'extension worker API bindings' });
       await A.evaluate(worker.sid, "chrome.storage.local.set({ab_stealth:true,ab_cursor:true})");
       await waitFor(() => fs.existsSync(path.join(env.CHROME_USE_RELAY_DIR, 'relay-cdp-url')), { timeout: 30000, label: 'extension relay' });
       evidence.modes.push({ mode, chrome: browser.version, stealth: await A.evaluate(worker.sid, "chrome.storage.local.get(['ab_stealth','ab_cursor'])") });
@@ -206,7 +210,7 @@ try {
   evidence.version = (await execute(bin, ['--version'])).stdout.trim();
   for (const mode of ['launch', 'relay']) {
     try { await runMode(mode); }
-    catch (error) { evidence.checks.push({ name: `${mode}: setup/teardown`, ok: false, error: error.stack }); save(); }
+    catch (error) { evidence.checks.push({ name: `${mode}: setup/teardown`, ok: false, error: error.stack }); console.log(`FAIL ${mode} setup: ${error.message}`); save(); }
   }
 } finally {
   site.close(); cross.close();
