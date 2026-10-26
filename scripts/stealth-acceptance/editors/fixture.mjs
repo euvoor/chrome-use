@@ -53,7 +53,7 @@ window.fixture.language = name => monaco.editor.setModelLanguage(code.getModel()
 // production discovery path never calls these helpers or the oracle below.
 window.fixture.armModelFault = kind => {
   const input = document.querySelector('#monaco textarea.inputarea');
-  const oldModel = code.getModel(), oldFocus = input.focus;
+  const oldModel = code.getModel(), oldValue = oldModel.getValue(), oldFocus = input.focus;
   let replacement;
   const state = window.fixture.modelFault = {kind, fired:false};
   const listener = event => {
@@ -78,7 +78,9 @@ window.fixture.armModelFault = kind => {
     document.removeEventListener('keydown', listener, true);
     document.removeEventListener('beforeinput', listener, true);
     input.focus = oldFocus;
-    if (replacement) {code.setModel(oldModel);replacement.dispose();}
+    // Monaco disposes a model it created from the editor's initial value when
+    // setModel replaces it. Restore a fresh fixture model in that case.
+    if (replacement) {code.setModel(oldModel.isDisposed()?monaco.editor.createModel(oldValue):oldModel);replacement.dispose();}
   };
 };
 window.fixture.read = name => {
