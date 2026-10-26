@@ -1,5 +1,6 @@
-// Research-only CDP inspection on the owned editor fixture. Never evaluates
-// getters, runs editor methods, or changes the system clipboard.
+// Research-only CDP inspection on the owned editor fixture. Discovery reads
+// property descriptors without getters; optional exercise validates the found
+// API with read-only model methods and native input, without copy/paste.
 export async function inspectEditorHandles(send, exercise) {
   const group='editor-handle-probe';
   const records=[],candidates=[],queue=[],seen=new Set();

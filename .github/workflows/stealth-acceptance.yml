@@ -11,6 +11,10 @@ on:
       - 'cli/**'
   workflow_dispatch:
     inputs:
+      extended_geometry:
+        description: Test projection with scrolling frames and every capture region in owned active tabs
+        type: boolean
+        default: false
       geometry_baseline:
         description: Record baseline frame transform refusals
         type: boolean
@@ -136,6 +140,7 @@ jobs:
         env:
           STEALTH_PLATFORM: ${{ (!inputs.editors_only && !inputs.benchmark_only) && '1' || '0' }}
           STEALTH_GEOMETRY: '1'
+          GEOMETRY_EXTENDED: ${{ inputs.extended_geometry && '1' || '0' }}
           GEOMETRY_BASELINE: '0'
           HOST_BIN: ${{ github.workspace }}/cli/target/ci/chrome-use
           ACCEPT_OUT: ${{ github.workspace }}/stealth-evidence
