@@ -3,6 +3,7 @@ on:
   push:
     branches: [review/stealth-followup-validation]
     paths:
+      - extensions/ab-connect/**
       - scripts/stealth-bench.sh
       - scripts/stealth-bench.test.js
       - .github/workflows/followup-unit-controls.yml
@@ -23,3 +24,4 @@ jobs:
           node-version-file: .node-version
       - run: bash -n scripts/stealth-bench.sh
       - run: node --test scripts/stealth-bench.test.js
+      - run: node --test extensions/ab-connect/*.test.js
