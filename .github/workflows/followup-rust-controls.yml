@@ -1,0 +1,38 @@
+name: Follow-up Rust controls
+on:
+  push:
+    branches: [review/stealth-followup-validation]
+    paths: [.github/workflows/followup-rust-controls.yml]
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Reviewed fork source commit to compile and test
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  controls:
+    if: github.repository == 'euvoor/chrome-use'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.source_ref || 'eae205c82e6eff904c7c56e98428d2fd5577ec80' }}
+          persist-credentials: false
+      - run: git rev-parse HEAD
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: cli
+          shared-key: linux-ci
+      - run: cargo fmt --manifest-path cli/Cargo.toml -- --check
+      - run: cargo test --locked --profile ci --bin chrome-use --manifest-path cli/Cargo.toml native::browser::tests
+      - run: cargo clippy --locked --profile ci --bin chrome-use --manifest-path cli/Cargo.toml -- -D warnings
