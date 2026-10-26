@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { waitFor } from '../inspect-acceptance/lib.mjs';
 import { checkModelReads } from './model-read-checks.mjs';
+import { checkModelProduction } from './model-production-checks.mjs';
 
 async function grantOnLaunchedBrowser(profile, origin) {
   const [port, endpoint] = fs.readFileSync(path.join(profile,'DevToolsActivePort'),'utf8').trim().split('\n');
@@ -29,7 +30,8 @@ async function grantOnLaunchedBrowser(profile, origin) {
 }
 
 export async function checkEditors({mode,profile,url,ok,cli,evaluate,check,browser,A,worker,evidence,save}) {
-  const editorUrl = `${url}editors/`;
+  const production=process.env.STEALTH_MODEL_PRODUCTION==='1';
+  const editorUrl = `${url}editors/${production?'?wrapped=1':''}`;
   let launchPermissions;
   try {
   await ok(['open',editorUrl]);
@@ -211,6 +213,7 @@ export async function checkEditors({mode,profile,url,ok,cli,evaluate,check,brows
     }
     return records;
   });
-  if(mode==='relay')await checkModelReads({url,ok,evaluate,check,A,worker,evidence,save});
+  if(production)await checkModelProduction({mode,url,ok,cli,evaluate,check,evidence,save});
+  else if(mode==='relay')await checkModelReads({url,ok,evaluate,check,A,worker,evidence,save});
   } finally {launchPermissions?.close();}
 }

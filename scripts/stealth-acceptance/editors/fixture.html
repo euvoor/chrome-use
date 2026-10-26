@@ -12,4 +12,27 @@ body { margin: 24px; font: 16px sans-serif; }
 <h2>ProseMirror</h2><div id="prosemirror"></div>
 <h2>Monaco, textarea input with hidden module API</h2><div id="monaco"></div>
 <h2>Independent second Monaco model</h2><div id="monaco-secondary"></div>
+<script>
+// A real embedding variant whose listener wrappers hide the library's module
+// scope from bounded discovery. Exercise the existing clipboard fallback with
+// actual Monaco behavior, without changing CDP responses or the production CLI.
+if (new URLSearchParams(location.search).has('wrapped')) {
+  (() => {
+    const add=EventTarget.prototype.addEventListener;
+    const remove=EventTarget.prototype.removeEventListener;
+    const wrappers=new WeakMap();
+    EventTarget.prototype.addEventListener=function(type,listener,options) {
+      if(this instanceof HTMLTextAreaElement&&typeof listener==='function') {
+        if(!wrappers.has(listener))wrappers.set(listener,function(event){return listener.call(this,event);});
+        listener=wrappers.get(listener);
+      }
+      return add.call(this,type,listener,options);
+    };
+    EventTarget.prototype.removeEventListener=function(type,listener,options) {
+      if(this instanceof HTMLTextAreaElement&&typeof listener==='function')listener=wrappers.get(listener)||listener;
+      return remove.call(this,type,listener,options);
+    };
+  })();
+}
+</script>
 <script type="module" src="/editors/editors.js"></script>
