@@ -115,6 +115,14 @@ for (const name of ['read','write','readText','writeText']) {
     if(fault&&((name==='read'&&fault.kind==='backup')||(name==='write'&&fault.kind==='restore'&&fault.stages))) {
       fault.fired=true;throw Error('fixture '+fault.kind+' rejected');
     }
+    // Characterize the remaining compare/restore gap with a real clipboard
+    // write after the comparison, immediately before the native restore.
+    if(fault?.kind==='late-concurrent'&&name==='write'&&fault.stages&&!fault.fired) {
+      fault.fired=true;
+      const native=Object.getPrototypeOf(navigator.clipboard);
+      await native.writeText.call(navigator.clipboard,'late concurrent clipboard');
+      fault.concurrentValue=await native.readText.call(navigator.clipboard);
+    }
     try { const result = await original(...args); record.finished=performance.now();
       if(name === 'read') record.types=result.map(item=>[...item.types]);
       if(name==='writeText'&&fault) {

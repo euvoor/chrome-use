@@ -141,6 +141,26 @@ export async function checkEditors({mode,profile,url,ok,cli,evaluate,check,brows
       return record;
     });
   }
+  await check(`${mode}: characterize remaining fallback compare/restore race`,async()=>{
+    await evaluate("navigator.clipboard.writeText('old clipboard backup')");
+    await evaluate("fixture.armFault('late-concurrent')");
+    let response,details;
+    try {
+      response=await cli(['fill','#monaco','late race editor value']);
+      details=await evaluate('fixture.fault');
+    } finally {await evaluate('fixture.disarmFault()');}
+    const after=await evaluate("(async()=>({clipboard:await navigator.clipboard.readText(),model:fixture.read('monaco')}))()");
+    const record={mode,response,details,after,limitation:'fallback comparison and restoration are not atomic'};
+    (evidence.clipboardRace??=[]).push(record);save();
+    assert.equal(details.fired,true);
+    assert.equal(details.concurrentValue,'late concurrent clipboard');
+    // This proves the limitation, not clipboard safety: the newer value is
+    // overwritten even though the fallback reports success after readback.
+    assert.equal(response.success,true,JSON.stringify(record));
+    assert.equal(after.model,'late race editor value');
+    assert.equal(after.clipboard,'old clipboard backup');
+    return record;
+  });
   if(mode==='relay') for(const fault of ['input','concurrent']) {
     await check(`relay: real Monaco ${fault} fault preserves clipboard and removes listeners`,async()=>{
       const tab=(await A.evaluate(worker.sid,'chrome.tabs.query({})')).find(t=>t.url===editorUrl);assert.ok(tab);
