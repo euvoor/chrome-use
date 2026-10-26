@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { waitFor } from '../inspect-acceptance/lib.mjs';
+import { inspectEditorHandles } from './editor-handles-probe.mjs';
 
 async function grantOnLaunchedBrowser(profile, origin) {
   const [port, endpoint] = fs.readFileSync(path.join(profile,'DevToolsActivePort'),'utf8').trim().split('\n');
@@ -209,6 +210,13 @@ export async function checkEditors({mode,profile,url,ok,cli,evaluate,check,brows
       }
     }
     return records;
+  });
+  if(mode==='relay') await check('relay: inspect owned editor handler scopes without clipboard writes',async()=>{
+    const tab=(await A.evaluate(worker.sid,'chrome.tabs.query({})')).find(t=>t.url===editorUrl);assert.ok(tab);
+    const send=(method,params)=>A.evaluate(worker.sid,`chrome.debugger.sendCommand({tabId:${tab.id}},${JSON.stringify(method)},${JSON.stringify(params)})`);
+    const result=await inspectEditorHandles(send);
+    evidence.editorHandles=result;save();
+    return result;
   });
   } finally {launchPermissions?.close();}
 }

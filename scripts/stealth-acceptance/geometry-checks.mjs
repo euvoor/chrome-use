@@ -60,7 +60,35 @@ export async function checkGeometry({mode, ok, cli, evaluate, check, outDir, evi
               // image capture from the projection/annotation implementation.
               record.rawControl=await cli(['screenshot',path.join(outDir,`${mode}-raw-${label}-${dpr}.png`)]);
               const target=record.trace.find(t=>t.method==='Page.captureScreenshot')?.target;
-              if(target) record.viewControl=await A.evaluate(worker.sid,`Promise.race([chrome.debugger.sendCommand(${JSON.stringify(target)},'Page.captureScreenshot',{format:'png',fromSurface:false}).then(r=>({bytes:r.data?.length})).catch(e=>({error:e.message})),new Promise(r=>setTimeout(()=>r({error:'diagnostic timeout'}),5000))])`);
+              if(target) {
+                record.captureControls=[];
+                for(const kind of ['viewport-clip','full-clip']) {
+                  const recovery=await cli(['get','title']);
+                  const control=await A.evaluate(worker.sid,`(async()=>{
+                    const target=${JSON.stringify(target)},kind=${JSON.stringify(kind)};
+                    const metrics=await chrome.debugger.sendCommand(target,'Page.getLayoutMetrics');
+                    const v=metrics.cssVisualViewport,c=metrics.cssContentSize;
+                    const clip=kind==='viewport-clip'?{x:v.pageX,y:v.pageY,width:v.clientWidth,height:v.clientHeight,scale:1}:{x:0,y:0,width:c.width,height:c.height,scale:1};
+                    const params={format:'png',fromSurface:true,captureBeyondViewport:true,clip};
+                    const result=await Promise.race([chrome.debugger.sendCommand(target,'Page.captureScreenshot',params).then(r=>({bytes:r.data?.length})).catch(e=>({error:e.message})),new Promise(r=>setTimeout(()=>r({error:'diagnostic timeout'}),5000))]);
+                    return {kind,params,result};
+                  })()`);
+                  record.captureControls.push({recovery,control});
+                }
+                if(label==='rotate') {
+                  record.windowControl=await A.evaluate(worker.sid,`(async()=>{
+                    const tab=await chrome.tabs.get(${target.tabId});
+                    const windows=await chrome.windows.getAll();
+                    const focused=windows.find(w=>w.focused);
+                    try {
+                      await chrome.windows.update(tab.windowId,{focused:true});
+                      await chrome.tabs.update(tab.id,{active:true});
+                      const result=await Promise.race([chrome.debugger.sendCommand({tabId:tab.id},'Page.captureScreenshot',{format:'png',fromSurface:true}).then(r=>({bytes:r.data?.length})).catch(e=>({error:e.message})),new Promise(r=>setTimeout(()=>r({error:'diagnostic timeout'}),5000))]);
+                      return {tab,windows,result};
+                    } finally {if(focused)await chrome.windows.update(focused.id,{focused:true});}
+                  })()`);
+                }
+              }
             }
           }
           (evidence.geometry??=[]).push(record);save();
