@@ -9,6 +9,7 @@ import { waitFor } from '../inspect-acceptance/lib.mjs';
 export async function checkGeometry({mode, ok, cli, evaluate, check, outDir, evidence, save, A, worker}) {
   const baseline = process.env.GEOMETRY_BASELINE === '1';
   const extended = process.env.GEOMETRY_EXTENDED === '1';
+  const activityOnly = process.env.CAPTURE_ACTIVITY_ONLY === '1';
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://fixture');
     res.setHeader('Content-Type', 'text/html');
@@ -43,7 +44,7 @@ export async function checkGeometry({mode, ok, cli, evaluate, check, outDir, evi
     ...(extended?[['scrollbars','skew(20deg,10deg)',false]]:[]),
   ];
   try {
-    for (const [label, transform, nested] of cases) {
+    for (const [label, transform, nested] of activityOnly?[]:cases) {
       await check(`${mode}: ${label} frame geometry`,async()=>{
         const fixtureUrl=`http://127.0.0.1:${server.address().port}/${nested?'?nested':label==='scrollbars'?'?scrollbars':''}`;
         await ok(['open',fixtureUrl]);
@@ -143,15 +144,24 @@ export async function checkGeometry({mode, ok, cli, evaluate, check, outDir, evi
       try {
         for(const [index,active] of [false,true,false,true].entries()) {
           await A.evaluate(worker.sid,`chrome.tabs.update(${active?tab.id:sibling.id},{active:true})`);
-          for(const dpr of [1,2]) {
-            await ok(['set','viewport','1100','750',String(dpr)]);
-            const state=await A.evaluate(worker.sid,`chrome.tabs.get(${tab.id})`);
-            const before=await evaluate('({visibility:document.visibilityState,focus:document.hasFocus(),dpr:devicePixelRatio})');
-            const result=await cli(['screenshot',path.join(outDir,`relay-activity-${index}-${dpr}.png`),'--annotate']);
-            observations.push({index,active,dpr,state,before,result});
-            evidence.captureActivity=observations;save();
-            // Complete ordinary daemon health recovery before the next cell.
-            if(!result.success)await cli(['get','title']);
+          for(const [label,transform] of [['plain','none'],['rotate','rotate(25deg)']]) {
+            for(const dpr of [1,2]) for(const annotated of [false,true]) {
+              // Match navigation, transform, DPR and scroll setup for raw and
+              // annotated captures. Activation only affects our fixture tabs.
+              await ok(['open',fixtureUrl]);
+              await waitFor(async()=>await evaluate('document.readyState')==='complete',{label:'activity navigation ready'});
+              await evaluate(`for(const f of document.querySelectorAll('iframe')) f.style.transform=${JSON.stringify(transform)}`);
+              await ok(['set','viewport','1100','750',String(dpr)]);
+              await evaluate(`scrollTo(0,${dpr===2?80:0})`);
+              const state=await A.evaluate(worker.sid,`chrome.tabs.get(${tab.id})`);
+              const before=await evaluate('({visibility:document.visibilityState,focus:document.hasFocus(),dpr:devicePixelRatio})');
+              const result=await cli(['screenshot',path.join(outDir,`relay-activity-${index}-${label}-${dpr}-${annotated}.png`),...(annotated?['--annotate']:[])]);
+              observations.push({index,active,label,transform,annotated,dpr,state,before,result});
+              evidence.captureActivity=observations;save();
+              assert.equal(state.active,active,'activity condition must remain as requested');
+              // Complete ordinary daemon health recovery before the next cell.
+              if(!result.success)await cli(['get','title']);
+            }
           }
         }
       } finally {
