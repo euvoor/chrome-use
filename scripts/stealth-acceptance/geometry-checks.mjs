@@ -80,12 +80,16 @@ export async function checkGeometry({mode, ok, cli, evaluate, check, outDir, evi
                     const tab=await chrome.tabs.get(${target.tabId});
                     const windows=await chrome.windows.getAll();
                     const focused=windows.find(w=>w.focused);
+                    const active=(await chrome.tabs.query({windowId:tab.windowId,active:true}))[0];
                     try {
                       await chrome.windows.update(tab.windowId,{focused:true});
                       await chrome.tabs.update(tab.id,{active:true});
                       const result=await Promise.race([chrome.debugger.sendCommand({tabId:tab.id},'Page.captureScreenshot',{format:'png',fromSurface:true}).then(r=>({bytes:r.data?.length})).catch(e=>({error:e.message})),new Promise(r=>setTimeout(()=>r({error:'diagnostic timeout'}),5000))]);
                       return {tab,windows,result};
-                    } finally {if(focused)await chrome.windows.update(focused.id,{focused:true});}
+                    } finally {
+                      if(active)await chrome.tabs.update(active.id,{active:true});
+                      if(focused)await chrome.windows.update(focused.id,{focused:true});
+                    }
                   })()`);
                 }
               }
@@ -112,5 +116,34 @@ export async function checkGeometry({mode, ok, cli, evaluate, check, outDir, evi
         return observations;
       });
     }
+    if(mode==='relay')await check('relay: controlled active/inactive capture observations',async()=>{
+      const fixtureUrl=`http://127.0.0.1:${server.address().port}/?capture-control`;
+      await ok(['open',fixtureUrl]);
+      await waitFor(async()=>await evaluate('document.readyState')==='complete',{label:'capture control ready'});
+      const tabs=await A.evaluate(worker.sid,'chrome.tabs.query({})');
+      const tab=tabs.find(t=>t.url===fixtureUrl);assert.ok(tab);
+      const prior=tabs.find(t=>t.windowId===tab.windowId&&t.active);
+      const sibling=await A.evaluate(worker.sid,`chrome.tabs.create({windowId:${tab.windowId},url:'about:blank',active:false})`);
+      const observations=[];
+      try {
+        for(const [index,active] of [false,true,false,true].entries()) {
+          await A.evaluate(worker.sid,`chrome.tabs.update(${active?tab.id:sibling.id},{active:true})`);
+          for(const dpr of [1,2]) {
+            await ok(['set','viewport','1100','750',String(dpr)]);
+            const state=await A.evaluate(worker.sid,`chrome.tabs.get(${tab.id})`);
+            const before=await evaluate('({visibility:document.visibilityState,focus:document.hasFocus(),dpr:devicePixelRatio})');
+            const result=await cli(['screenshot',path.join(outDir,`relay-activity-${index}-${dpr}.png`),'--annotate']);
+            observations.push({index,active,dpr,state,before,result});
+            evidence.captureActivity=observations;save();
+            // Complete ordinary daemon health recovery before the next cell.
+            if(!result.success)await cli(['get','title']);
+          }
+        }
+      } finally {
+        if(prior)await A.evaluate(worker.sid,`chrome.tabs.update(${prior.id},{active:true})`);
+        await A.evaluate(worker.sid,`chrome.tabs.remove(${sibling.id})`);
+      }
+      return observations;
+    });
   } finally { server.close(); }
 }

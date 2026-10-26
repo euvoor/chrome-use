@@ -63,6 +63,7 @@ jobs:
         run: |
           cargo fmt --manifest-path cli/Cargo.toml -- --check
           cargo test --locked --profile ci --bin chrome-use --manifest-path cli/Cargo.toml native::screenshot
+          cargo test --locked --profile ci --bin chrome-use --manifest-path cli/Cargo.toml native::relay::tests
       - name: Build tested CLI
         run: cargo build --locked --profile ci --manifest-path cli/Cargo.toml
       - name: Preserve combined binary for benchmark comparison

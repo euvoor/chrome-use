@@ -68,6 +68,19 @@ export async function checkNativePlatform({startChrome,work,check,evidence,save}
           const gpu=await browser.send('SystemInfo.getInfo');
           const record={label,args,version:browser.version,result,gpu};
           (evidence.nativePlatform??=[]).push(record);save();
+          if(label==='default') {
+            // Same locale and challenge as the existing benchmark, but no
+            // chrome-use daemon, extension, stealth patches or input actions.
+            const challengeUrl='https://www.scrapingcourse.com/cloudflare-challenge';
+            await browser.send('Page.navigate',{url:challengeUrl},sessionId);
+            record.challenge={url:challengeUrl,samples:[]};save();
+            const started=Date.now();
+            for(const elapsed of [0,16000,32000,64000]) {
+              await new Promise(resolve=>setTimeout(resolve,Math.max(0,started+elapsed-Date.now())));
+              const sample=await browser.send('Runtime.evaluate',{expression:'({title:document.title,url:location.href,text:document.body?.innerText?.slice(0,500)})',returnByValue:true},sessionId);
+              record.challenge.samples.push({elapsedMs:Date.now()-started,result:sample.result.value});save();
+            }
+          }
           assert.equal(result.language,'ja-JP');
           assert.deepEqual(result.languages,result.worker.languages);
           assert.ok(result.header.startsWith('ja-JP'));
