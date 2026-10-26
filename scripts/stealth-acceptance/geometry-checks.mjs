@@ -5,7 +5,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { waitFor } from '../inspect-acceptance/lib.mjs';
 
-export async function checkGeometry({mode, ok, cli, evaluate, check, outDir, evidence, save}) {
+export async function checkGeometry({mode, ok, cli, evaluate, check, outDir, evidence, save, A, worker}) {
   const baseline = process.env.GEOMETRY_BASELINE === '1';
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://fixture');
@@ -49,8 +49,10 @@ export async function checkGeometry({mode, ok, cli, evaluate, check, outDir, evi
           await evaluate(`scrollTo(0,${scroll});mutations=[]`);
           const before=await evaluate('Object.getOwnPropertyNames(window).sort()');
           const file=path.join(outDir,`${mode}-geometry-${label}-${dpr}.png`);
+          if(mode==='relay')await A.evaluate(worker.sid,'stealthCaptureTrace=[]');
           const result=await cli(['screenshot',file,'--annotate']);
           const record={mode,label,transform,nested,dpr,scroll,result};
+          if(mode==='relay')record.trace=await A.evaluate(worker.sid,'stealthCaptureTrace');
           (evidence.geometry??=[]).push(record);save();
           assert.deepEqual(await evaluate('Object.getOwnPropertyNames(window).sort()'),before);
           assert.equal(await evaluate('mutations.length'),0);

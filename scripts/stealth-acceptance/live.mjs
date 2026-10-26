@@ -80,6 +80,8 @@ const children = [];
 // or runner tokens are inherited by Chrome or the tested CLI/native host.
 async function startChrome(profile, env, args) {
   const port = 9471;
+  const occupied=await fetch(`http://127.0.0.1:${port}/json/version`,{signal:AbortSignal.timeout(1000)}).then(()=>true,()=>false);
+  assert.equal(occupied,false,'test debugging port must not belong to a previous browser');
   const log = fs.openSync(path.join(outDir, 'chrome.log'), 'a');
   const proc = spawn(chrome, [`--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--window-size=1280,900', ...args, 'about:blank'], { env, stdio: ['ignore', log, log] });
   children.push(proc);
@@ -99,7 +101,7 @@ async function startChrome(profile, env, args) {
     pending.set(id, reply => { clearTimeout(timer); reply.error ? reject(Error(`${method}: ${reply.error.message}`)) : resolve(reply.result); });
     ws.send(JSON.stringify({ id, method, params, sessionId }));
   });
-  return { proc, send, listeners, version: version.Browser, async close() { await send('Browser.close').catch(() => {}); ws.close(); proc.kill('SIGTERM'); } };
+  return { proc, send, listeners, version: version.Browser, async close() { await send('Browser.close').catch(() => {}); ws.close(); proc.kill('SIGTERM'); await waitFor(()=>proc.exitCode!==null||proc.signalCode!==null,{timeout:10000,label:'owned Chrome exited'}); } };
 }
 
 async function runMode(mode) {
@@ -153,9 +155,9 @@ async function runMode(mode) {
       if(!benchmarkMode) await A.evaluate(worker.sid,`(() => {
         const original=chrome.debugger.sendCommand.bind(chrome.debugger);globalThis.stealthCaptureTrace=[];
         chrome.debugger.sendCommand=async (...args)=>{
-          if(args[1]!=='Page.captureScreenshot')return original(...args);
-          const record={target:args[0],params:args[2],started:Date.now()};stealthCaptureTrace.push(record);
-          try{const result=await original(...args);record.finished=Date.now();record.bytes=result.data?.length;return result;}
+          if(!['Page.captureScreenshot','Page.getFrameTree','Accessibility.getFullAXTree','DOM.describeNode'].includes(args[1]))return original(...args);
+          const record={method:args[1],target:args[0],params:args[2],started:Date.now()};stealthCaptureTrace.push(record);
+          try{const result=await original(...args);record.finished=Date.now();record.bytes=result.data?.length;if(result.frameTree)record.frameTree=result.frameTree;if(result.nodes)record.ax=result.nodes.filter(n=>['button','Iframe'].includes(n.role?.value)).map(n=>({role:n.role?.value,name:n.name?.value,backendNodeId:n.backendDOMNodeId,frameId:n.frameId}));if(result.node)record.node={nodeId:result.node.nodeId,backendNodeId:result.node.backendNodeId,frameId:result.node.frameId,contentFrameId:result.node.contentDocument?.frameId};return result;}
           catch(error){record.error=error.message;throw error;}
         };return true;
       })()`);
@@ -183,7 +185,7 @@ async function runMode(mode) {
     }
     if (platformMode) await checkPlatformCli({mode,ok,evaluate,check,evidence,save});
     if (geometryMode) {
-      await checkGeometry({mode, ok, cli, evaluate, check, outDir, evidence, save});
+      await checkGeometry({mode, ok, cli, evaluate, check, outDir, evidence, save, A, worker});
       return;
     }
     await ok(['open', url]);
