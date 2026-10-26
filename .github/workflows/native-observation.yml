@@ -1,0 +1,71 @@
+name: Native browser without debugger (fork observation)
+
+on:
+  push:
+    branches: [review/stealth-followup-validation]
+    paths:
+      - '.github/workflows/native-observation.yml'
+      - 'scripts/native-observation.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  observe:
+    if: github.repository == 'euvoor/chrome-use'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+      - name: Prepare disposable virtual desktop and sandbox support
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb ffmpeg
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - name: Download official stable Chrome for Testing
+        shell: python
+        run: |
+          import hashlib, json, os, pathlib, urllib.request, urllib.parse, zipfile
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'native-cft'
+          root.mkdir()
+          index = 'https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json'
+          with urllib.request.urlopen(index, timeout=30) as response:
+              stable = json.load(response)['channels']['Stable']
+          url = next(x['url'] for x in stable['downloads']['chrome'] if x['platform'] == 'linux64')
+          parsed = urllib.parse.urlparse(url)
+          assert parsed.scheme == 'https' and parsed.hostname == 'storage.googleapis.com'
+          archive = root / 'chrome.zip'
+          urllib.request.urlretrieve(url, archive)
+          with zipfile.ZipFile(archive) as bundle:
+              for item in bundle.infolist():
+                  assert (root / item.filename).resolve().is_relative_to(root.resolve())
+                  bundle.extract(item, root)
+                  mode = item.external_attr >> 16
+                  if mode:
+                      (root / item.filename).chmod(mode)
+          chrome = root / 'chrome-linux64/chrome'
+          chrome.chmod(0o755)
+          out = pathlib.Path('native-observation')
+          out.mkdir()
+          (out / 'browser-download.json').write_text(json.dumps({
+              'version': stable['version'], 'url': url,
+              'sha256': hashlib.sha256(archive.read_bytes()).hexdigest()}, indent=2))
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write(f'CHROME={chrome}\n')
+      - name: Observe without a debugger connection
+        run: xvfb-run -a -s '-screen 0 1440x1000x24' node scripts/native-observation.mjs
+      - name: Preserve observations even when the harness fails
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: native-without-debugger
+          path: native-observation/
+          if-no-files-found: error
