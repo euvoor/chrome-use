@@ -1,6 +1,6 @@
 # Stealth audit acceptance
 
-This rig is for issue 729's combined review branch. Its workflow runs only on the contributor fork, on disposable GitHub-hosted machines. The script refuses local and self-hosted execution. No personal Chrome profile, browser cookies or account credentials are supplied.
+This rig is reused for issue 747's follow-up validation branch, starting at upstream cb19b6be. Issue 729's accepted fixtures remain available for regression checks. Its workflow runs only on the contributor fork, on disposable GitHub-hosted machines. The script refuses local and self-hosted execution. No personal Chrome profile, browser cookies or account credentials are supplied.
 
 The headed job uses Chrome for Testing on Xvfb, a fresh profile and separate CLI/native-host directories for each mode. Chrome's internal sandbox remains enabled. The workflow permits user namespaces in the disposable Ubuntu VM so Chrome can create that sandbox. The tested binary and browser download are hashed in the evidence.
 
@@ -13,3 +13,13 @@ This is acceptance work in progress. Real package results, broader interruption 
 The optional `benchmark_only` dispatch builds the audited base and combined source, then runs the existing public detector script on the same hosted VM, with independent profiles and native-host directories. Per-command outputs, exit codes, binary hashes and source revisions are retained. A failed detector is not automatically attributed to the patch: compare baseline and combined results, including load failures. GitHub's public IP, a virtual display, fresh profiles and the relay test driver's browser debugging port limit how closely this represents a signed-in user's environment. These results cannot guarantee detector evasion or account safety.
 
 The original full CI manual run exercises the existing headless E2E suite separately. The optional `annotation_only` dispatch runs the permanent screenshot E2E regression after geometry changes; `monaco_e2e_only` runs the permanent native paste/copy and clipboard restoration regression. Those legacy helpers often disable Chrome's internal sandbox, making the disposable runner the isolation boundary for those separate runs.
+
+## Follow-up controls
+
+The default headed run compares identically transformed same-renderer and out-of-process frame specimens, including rotation, skew, reflection, perspective and nested frames. It checks DPR 1/2, scroll offsets, page globals and DOM mutations. The untouched-source baseline run records expected refusals; the current implementation must succeed and match the native same-renderer control within one CSS pixel. Relay protocol routing and capture traces are retained for diagnosing failures, without claiming that a timeout proves a blocked JavaScript thread.
+
+Native platform controls launch separate fresh Chrome processes with default, explicitly enabled and explicitly disabled language reduction. They record page/worker languages, actual request headers, WebGL context availability and browser GPU diagnostics. CLI launch and relay are measured separately with the same locale. Controls do not alter the production launcher or the user's browser settings.
+
+The editor mode includes a research-only clipboard-free experiment: native insertText, then a trusted copy observer that clears outgoing formats after reading the model data. Its stopped-propagation negative control demonstrates why this is not a general safety guarantee. These fixture listeners are not production code.
+
+The public benchmark comparison now uses cb19b6be as baseline. Its failure exit status is retained when either source fails; the controls do not reclassify shared GPU or challenge failures as passes.
