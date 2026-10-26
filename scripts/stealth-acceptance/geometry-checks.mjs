@@ -57,7 +57,7 @@ export async function checkGeometry({mode, ok, cli, evaluate, check, outDir, evi
         await waitFor(async()=> (await evaluate('document.readyState'))==='complete',{timeout:20000,label:'geometry fixture'});
         await evaluate(`for(const f of document.querySelectorAll('iframe')) f.style.transform=${JSON.stringify(transform)}`);
         const observations=[];
-        const captures=[1,2].flatMap(dpr=>(extended?[['viewport',[]],['full',['--full']],['clip',['--clip','0,100,1200,700']],['selector',['--selector','#pair']]]:[['viewport',[]]]).map(([region,args])=>({dpr,scroll:dpr===2?80:0,region,args})));
+        const captures=[1,2].flatMap(dpr=>(extended?[['viewport',[]],['full',['--full']],['clip',['--clip','0,100,1000,700']],['selector',['--selector','#pair']]]:[['viewport',[]]]).map(([region,args])=>({dpr,scroll:dpr===2?80:0,region,args})));
         for (const {dpr,scroll,region,args} of captures) {
           await ok(['set','viewport','1100','750',String(dpr)]);
           await evaluate(`scrollTo(0,${scroll});mutations=[]`);

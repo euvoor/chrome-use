@@ -63,6 +63,7 @@ jobs:
         with:
           workspaces: cli
           shared-key: linux-ci
+          cache-on-failure: true
       - name: Test screenshot projection and format
         run: |
           cargo fmt --manifest-path cli/Cargo.toml -- --check
