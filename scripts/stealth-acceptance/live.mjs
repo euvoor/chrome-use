@@ -97,7 +97,9 @@ async function startChrome(profile, env, args) {
   };
   const send = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
     const id = ++next;
-    const timer = setTimeout(() => { pending.delete(id); reject(Error(`${method} timed out`)); }, 30000);
+    // The protocol experiment observes whether a native capture eventually
+    // finishes after the relay deadline; it does not alter production budgets.
+    const timer = setTimeout(() => { pending.delete(id); reject(Error(`${method} timed out`)); }, process.env.CAPTURE_PROTOCOL_ONLY==='1'?90000:30000);
     pending.set(id, reply => { clearTimeout(timer); reply.error ? reject(Error(`${method}: ${reply.error.message}`)) : resolve(reply.result); });
     ws.send(JSON.stringify({ id, method, params, sessionId }));
   });
