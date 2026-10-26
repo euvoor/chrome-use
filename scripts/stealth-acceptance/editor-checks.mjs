@@ -177,5 +177,38 @@ export async function checkEditors({mode,profile,url,ok,cli,evaluate,check,brows
       return record;
     });
   }
+  // Research-only control, not a production proposal: inspect whether native
+  // insertText plus observing/clearing a trusted copy avoids OS clipboard writes.
+  // A stopped-propagation negative control tests the limit of that approach.
+  await check(`${mode}: exploratory clipboard-free native input and copy control`,async()=>{
+    const records=[];
+    for(const blocked of [false,true]) {
+      await evaluate(`fixture.copyProbe={seen:false};
+        fixture.copyProbeListener=e=>{if(!e.target.closest('#monaco'))return;fixture.copyProbe={seen:true,trusted:e.isTrusted,prevented:e.defaultPrevented,text:e.clipboardData.getData('text/plain')};e.clipboardData.clearData();e.preventDefault();};
+        fixture.copyStop=e=>e.stopImmediatePropagation();
+        document.addEventListener('copy',fixture.copyProbeListener);
+        ${blocked?"document.querySelector('#monaco textarea.inputarea').addEventListener('copy',fixture.copyStop);":""}
+        document.querySelector('#monaco textarea.inputarea').focus();`);
+      try {
+        const value='const greeting = "你好";\nconsole.log(greeting);';
+        await ok(['press','Control+a']);
+        await ok(['keyboard','inserttext',value]);
+        const model=await evaluate("fixture.read('monaco')");
+        await evaluate("navigator.clipboard.write([new ClipboardItem({'text/plain':new Blob(['concurrent clipboard sentinel'],{type:'text/plain'}),'text/html':new Blob(['<b>concurrent clipboard sentinel</b>'],{type:'text/html'})})])");
+        const before=await evaluate('fixture.clipboard()');
+        await ok(['press','Control+a']);
+        await ok(['press','Control+c']);
+        const probe=await evaluate('fixture.copyProbe');
+        const after=await evaluate('fixture.clipboard()');
+        const record={blocked,value,model,modelMatches:model===value,probe,before,after};
+        records.push(record);(evidence.clipboardFreeProbe??=[]).push({mode,...record});save();
+        if(!blocked){assert.equal(probe.seen,true);assert.equal(probe.trusted,true);assert.equal(probe.text,model);assert.deepEqual(after,before);}
+        else {assert.equal(probe.seen,false);assert.notDeepEqual(after,before,'negative control: a stopped copy escapes the late observer');}
+      } finally {
+        await evaluate("document.removeEventListener('copy',fixture.copyProbeListener);document.querySelector('#monaco textarea.inputarea').removeEventListener('copy',fixture.copyStop);delete fixture.copyProbeListener;delete fixture.copyStop");
+      }
+    }
+    return records;
+  });
   } finally {launchPermissions?.close();}
 }

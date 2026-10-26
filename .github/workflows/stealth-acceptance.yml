@@ -133,6 +133,7 @@ jobs:
       - name: Run headed launch and real extension relay fixtures
         if: ${{ !inputs.benchmark_only }}
         env:
+          STEALTH_PLATFORM: '1'
           STEALTH_GEOMETRY: '1'
           GEOMETRY_BASELINE: '0'
           HOST_BIN: ${{ github.workspace }}/cli/target/ci/chrome-use
@@ -211,5 +212,5 @@ jobs:
         env:
           AGENT_BROWSER_ALLOW_HEADLESS: '1'
           AGENT_BROWSER_EXECUTABLE_PATH: /usr/bin/google-chrome
-          E2E_FILTER: ${{ inputs.monaco_e2e_only && 'e2e_fill_monaco_is_atomic_and_verified' || 'e2e_screenshot_annotations_leave_no_dom_mutations' }}
+          E2E_FILTER: ${{ inputs.monaco_e2e_only && 'e2e_fill_monaco_is_atomic_and_verified' || 'e2e_screenshot_' }}
         run: cargo test --locked --profile ci --features e2e-tests --manifest-path cli/Cargo.toml "$E2E_FILTER" -- --ignored --test-threads=1

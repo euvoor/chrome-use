@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { waitFor, api } from '../inspect-acceptance/lib.mjs';
 import { checkEditors } from './editor-checks.mjs';
 import { checkGeometry } from './geometry-checks.mjs';
+import { checkPlatformCli, checkNativePlatform } from './platform-checks.mjs';
 
 assert.equal(process.env.GITHUB_ACTIONS, 'true', 'this rig is CI-only');
 assert.equal(process.env.RUNNER_ENVIRONMENT, 'github-hosted', 'use a disposable GitHub runner');
@@ -19,6 +20,7 @@ const execute = promisify(execFile);
 const bin = path.resolve(process.env.HOST_BIN);
 const chrome = path.resolve(process.env.CHROME);
 const extDir = path.resolve(process.env.EXT_DIR || 'extensions/ab-connect');
+const platformMode = process.env.STEALTH_PLATFORM === '1';
 const geometryMode = process.env.STEALTH_GEOMETRY === '1';
 const editorMode = process.env.STEALTH_EDITORS === '1';
 const benchmarkMode = process.env.STEALTH_BENCH === '1';
@@ -113,6 +115,7 @@ async function runMode(mode) {
     CHROME_USE_NO_UPDATE_CHECK: '1', AGENT_BROWSER_NO_AUTO_OPEN: '1',
     AGENT_BROWSER_NO_AUTO_RECONNECT: '1', NO_COLOR: '1',
   };
+  if (platformMode) env.AGENT_BROWSER_LOCALE='ja-JP';
   const session = `stealth-${mode}`;
   let browser, worker, A;
   const cli = async args => {
@@ -138,7 +141,7 @@ async function runMode(mode) {
       fs.writeFileSync(wrapper, `#!/bin/sh\nexec /usr/bin/env -i ${Object.entries(env).map(([k,v]) => `${k}=${quote(v)}`).join(' ')} ${quote(bin)} __nm-host "$@"\n`, { mode: 0o700 });
       fs.mkdirSync(path.join(profile, 'NativeMessagingHosts'), { recursive: true });
       fs.writeFileSync(path.join(profile, 'NativeMessagingHosts', 'com.agent_browser.connect.json'), JSON.stringify({ name: 'com.agent_browser.connect', description: 'isolated stealth acceptance', path: wrapper, type: 'stdio', allowed_origins: [`chrome-extension://${extId}/`] }));
-      browser = await startChrome(profile, env, [`--load-extension=${extDir}`, `--disable-extensions-except=${extDir}`]);
+      browser = await startChrome(profile, env, [`--load-extension=${extDir}`, `--disable-extensions-except=${extDir}`,...(platformMode?['--accept-lang=ja-JP,ja']:[])]);
       A = api(browser); worker = await A.worker();
       evidence.workerTarget = worker.target;
       // The first run observed an announced worker with no chrome binding.
@@ -178,6 +181,7 @@ async function runMode(mode) {
       await checkEditors({mode,profile,url,ok,cli,evaluate,check,browser,A,worker,evidence,save});
       return;
     }
+    if (platformMode) await checkPlatformCli({mode,ok,evaluate,check,evidence,save});
     if (geometryMode) {
       await checkGeometry({mode, ok, cli, evaluate, check, outDir, evidence, save});
       return;
@@ -472,6 +476,7 @@ try {
     try { await runMode(mode); }
     catch (error) { evidence.checks.push({ name: `${mode}: setup/teardown`, ok: false, error: error.stack }); console.log(`FAIL ${mode} setup: ${error.message}`); save(); }
   }
+  if(platformMode) await checkNativePlatform({startChrome,work,check,evidence,save});
   if(!geometryMode && !editorMode && !benchmarkMode) await check('frame protocol geometry observations', probeGeometry);
 } finally {
   site.close(); cross.close();
