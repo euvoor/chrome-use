@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/native-observation.yml'
       - 'scripts/native-observation.mjs'
+      - 'scripts/native-desktop.py'
   workflow_dispatch:
 
 permissions:
@@ -25,8 +26,9 @@ jobs:
           node-version-file: .node-version
       - name: Prepare disposable virtual desktop and sandbox support
         run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb ffmpeg
+          # Hosted images already provide Xvfb and libX11. Avoid unrelated codec downloads.
+          command -v xvfb-run
+          ldconfig -p | rg 'libX11.so.6'
           if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi

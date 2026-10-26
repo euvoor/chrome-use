@@ -46,9 +46,8 @@ async function observe(name, url, observations) {
       assert.equal(child.exitCode, null, 'Chrome exited before observation');
       record.processArguments = fs.readFileSync(`/proc/${child.pid}/cmdline`, 'utf8').split('\0').filter(Boolean);
       const file = `${name}-${seconds}s.png`;
-      await execute('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'x11grab',
-        '-video_size', '1440x1000', '-i', process.env.DISPLAY, '-frames:v', '1',
-        '-update', '1', '-y', path.join(out, file)], { env, timeout: 15000 });
+      await execute('python3', ['scripts/native-desktop.py', path.join(out, file)],
+        { env: { ...env, GITHUB_ACTIONS: 'true', RUNNER_ENVIRONMENT: 'github-hosted' }, timeout: 15000 });
       record.screenshots.push({ file, elapsedMs: Date.now() - start });
       save();
     }
