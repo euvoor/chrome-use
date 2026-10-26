@@ -5,11 +5,14 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { waitFor } from '../inspect-acceptance/lib.mjs';
+import { checkCaptureProtocols } from './capture-protocol-checks.mjs';
 
-export async function checkGeometry({mode, ok, cli, evaluate, check, outDir, evidence, save, A, worker}) {
+export async function checkGeometry({mode, ok, cli, evaluate, check, outDir, evidence, save, A, worker, browser}) {
   const baseline = process.env.GEOMETRY_BASELINE === '1';
   const extended = process.env.GEOMETRY_EXTENDED === '1';
   const activityOnly = process.env.CAPTURE_ACTIVITY_ONLY === '1';
+  const protocolOnly = process.env.CAPTURE_PROTOCOL_ONLY === '1';
+  if(protocolOnly&&mode!=='relay')return;
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://fixture');
     res.setHeader('Content-Type', 'text/html');
@@ -44,6 +47,10 @@ export async function checkGeometry({mode, ok, cli, evaluate, check, outDir, evi
     ...(extended?[['scrollbars','skew(20deg,10deg)',false]]:[]),
   ];
   try {
+    if(protocolOnly) {
+      await checkCaptureProtocols({url:`http://127.0.0.1:${server.address().port}/`,A,worker,browser,check,evidence,save,outDir});
+      return;
+    }
     for (const [label, transform, nested] of activityOnly?[]:cases) {
       await check(`${mode}: ${label} frame geometry`,async()=>{
         const fixtureUrl=`http://127.0.0.1:${server.address().port}/${nested?'?nested':label==='scrollbars'?'?scrollbars':''}`;

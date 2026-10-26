@@ -185,7 +185,7 @@ async function runMode(mode) {
     }
     if (platformMode) await checkPlatformCli({mode,ok,evaluate,check,evidence,save});
     if (geometryMode) {
-      await checkGeometry({mode, ok, cli, evaluate, check, outDir, evidence, save, A, worker});
+      await checkGeometry({mode, ok, cli, evaluate, check, outDir, evidence, save, A, worker, browser});
       return;
     }
     await ok(['open', url]);

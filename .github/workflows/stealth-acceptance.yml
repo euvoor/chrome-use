@@ -11,6 +11,10 @@ on:
       - 'cli/**'
   workflow_dispatch:
     inputs:
+      capture_protocol_only:
+        description: Compare native extension and browser protocol capture sequences
+        type: boolean
+        default: false
       capture_activity_only:
         description: Compare active and inactive transformed capture with raw controls
         type: boolean
@@ -149,8 +153,9 @@ jobs:
       - name: Run headed launch and real extension relay fixtures
         if: ${{ !inputs.benchmark_only }}
         env:
-          STEALTH_PLATFORM: ${{ (!inputs.editors_only && !inputs.benchmark_only && !inputs.capture_activity_only) && '1' || '0' }}
+          STEALTH_PLATFORM: ${{ (!inputs.editors_only && !inputs.benchmark_only && !inputs.capture_activity_only && !inputs.capture_protocol_only) && '1' || '0' }}
           STEALTH_GEOMETRY: '1'
+          CAPTURE_PROTOCOL_ONLY: ${{ inputs.capture_protocol_only && '1' || '0' }}
           CAPTURE_ACTIVITY_ONLY: ${{ inputs.capture_activity_only && '1' || '0' }}
           GEOMETRY_EXTENDED: ${{ inputs.extended_geometry && '1' || '0' }}
           GEOMETRY_BASELINE: '0'
