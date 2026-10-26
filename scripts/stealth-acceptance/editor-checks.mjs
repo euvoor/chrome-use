@@ -234,7 +234,7 @@ export async function checkEditors({mode,profile,url,ok,cli,evaluate,check,brows
       // No copy or paste operation: the existing observer-blocking negative
       // control cannot affect this path. Model identity must match the DOM.
       for(const value of ['const hello = "你好";\nconsole.log(hello);',Array.from({length:300},(_,i)=>`line ${i}`).join('\n'),'']) {
-        await evaluate("navigator.clipboard.writeText('model-probe clipboard sentinel');document.querySelector('#monaco textarea.inputarea').focus();fixture.events=[]");
+        await evaluate("navigator.clipboard.writeText('model-probe clipboard sentinel');document.querySelector('#monaco textarea.inputarea').focus();fixture.events.length=0");
         const before=await evaluate('(async()=>({clipboard:await fixture.clipboard(),globals:Object.getOwnPropertyNames(window).sort()}))()');
         const prior=await readModel();
         await ok(['press','Control+a']);
@@ -244,7 +244,10 @@ export async function checkEditors({mode,profile,url,ok,cli,evaluate,check,brows
         assert.equal(model.value,value);assert.equal(after.oracle,value);
         assert.equal(model.uri,prior.uri);
         assert.deepEqual(after.clipboard,before.clipboard);assert.deepEqual(after.globals,before.globals);
+        assert.ok(after.events.length>0,'native input must produce observed events');
+        assert.ok(after.events.some(e=>e.type==='keydown'&&e.trusted),'trusted keyboard input was not observed');
         assert.ok(after.events.every(e=>e.trusted));
+        assert.ok(after.events.every(e=>!['copy','paste'].includes(e.type)),'model probe must not use clipboard events');
         records.push({valueLength:value.length,model,events:after.events,clipboardUnchanged:true,globalsUnchanged:true});
       }
       return records;
