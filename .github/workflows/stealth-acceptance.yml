@@ -59,6 +59,10 @@ jobs:
         with:
           workspaces: cli
           shared-key: linux-ci
+      - name: Test screenshot projection and format
+        run: |
+          cargo fmt --manifest-path cli/Cargo.toml -- --check
+          cargo test --locked --profile ci --manifest-path cli/Cargo.toml native::screenshot
       - name: Build tested CLI
         run: cargo build --locked --profile ci --manifest-path cli/Cargo.toml
       - name: Preserve combined binary for benchmark comparison
@@ -130,7 +134,7 @@ jobs:
         if: ${{ !inputs.benchmark_only }}
         env:
           STEALTH_GEOMETRY: '1'
-          GEOMETRY_BASELINE: ${{ (github.event_name == 'push' || inputs.geometry_baseline) && '1' || '0' }}
+          GEOMETRY_BASELINE: '0'
           HOST_BIN: ${{ github.workspace }}/cli/target/ci/chrome-use
           ACCEPT_OUT: ${{ github.workspace }}/stealth-evidence
           STEALTH_EDITORS: ${{ inputs.editors_only && '1' || '0' }}
