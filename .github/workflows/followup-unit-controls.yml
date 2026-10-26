@@ -1,0 +1,25 @@
+name: Follow-up benchmark controls
+on:
+  push:
+    branches: [review/stealth-followup-validation]
+    paths:
+      - scripts/stealth-bench.sh
+      - scripts/stealth-bench.test.js
+      - .github/workflows/followup-unit-controls.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  controls:
+    if: github.repository == 'euvoor/chrome-use'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+      - run: bash -n scripts/stealth-bench.sh
+      - run: node --test scripts/stealth-bench.test.js
