@@ -23,7 +23,10 @@ if (new URLSearchParams(location.search).has('wrapped')) {
     const wrappers=new WeakMap();
     EventTarget.prototype.addEventListener=function(type,listener,options) {
       if(this instanceof HTMLTextAreaElement&&typeof listener==='function') {
-        if(!wrappers.has(listener))wrappers.set(listener,function(event){return listener.call(this,event);});
+        if(!wrappers.has(listener)) {
+          const original=listener;
+          wrappers.set(listener,function(event){return original.call(this,event);});
+        }
         listener=wrappers.get(listener);
       }
       return add.call(this,type,listener,options);
