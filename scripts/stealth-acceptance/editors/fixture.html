@@ -5,10 +5,11 @@
 <style>
 body { margin: 24px; font: 16px sans-serif; }
 #lexical, #prosemirror { width: 600px; border: 1px solid; min-height: 70px; }
-#monaco { width: 700px; height: 250px; }
+#monaco, #monaco-secondary { width: 700px; height: 250px; }
 </style>
 <h1>Disposable editor fixtures</h1>
 <h2>Lexical</h2><div id="lexical" contenteditable="true" role="textbox" aria-label="Lexical fixture"></div>
 <h2>ProseMirror</h2><div id="prosemirror"></div>
 <h2>Monaco, textarea input with hidden module API</h2><div id="monaco"></div>
+<h2>Independent second Monaco model</h2><div id="monaco-secondary"></div>
 <script type="module" src="/editors/editors.js"></script>

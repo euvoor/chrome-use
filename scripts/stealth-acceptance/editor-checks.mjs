@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { waitFor } from '../inspect-acceptance/lib.mjs';
-import { inspectEditorHandles } from './editor-handles-probe.mjs';
+import { checkModelReads } from './model-read-checks.mjs';
 
 async function grantOnLaunchedBrowser(profile, origin) {
   const [port, endpoint] = fs.readFileSync(path.join(profile,'DevToolsActivePort'),'utf8').trim().split('\n');
@@ -211,50 +211,6 @@ export async function checkEditors({mode,profile,url,ok,cli,evaluate,check,brows
     }
     return records;
   });
-  if(mode==='relay') await check('relay: inspect owned editor handler scopes without clipboard writes',async()=>{
-    const tab=(await A.evaluate(worker.sid,'chrome.tabs.query({})')).find(t=>t.url===editorUrl);assert.ok(tab);
-    const send=(method,params)=>A.evaluate(worker.sid,`chrome.debugger.sendCommand({tabId:${tab.id}},${JSON.stringify(method)},${JSON.stringify(params)})`);
-    const result=await inspectEditorHandles(send,async(apiHandle,inputHandle)=>{
-      const readModel=async()=>{
-        const response=await send('Runtime.callFunctionOn',{
-          objectId:apiHandle,arguments:[{objectId:inputHandle}],returnByValue:true,
-          functionDeclaration:`function(input){
-            const root=input.closest('.monaco-editor');
-            const matches=this.getEditors().filter(e=>e.getDomNode()===root);
-            if(matches.length!==1)throw Error('ambiguous editor identity');
-            const model=matches[0].getModel();
-            if(!model)throw Error('editor has no live model');
-            return {value:model.getValue(),uri:String(model.uri)};
-          }`,
-        });
-        assert.ok(!response.exceptionDetails,JSON.stringify(response));
-        return response.result.value;
-      };
-      const records=[];
-      // No copy or paste operation: the existing observer-blocking negative
-      // control cannot affect this path. Model identity must match the DOM.
-      for(const value of ['const hello = "你好";\nconsole.log(hello);',Array.from({length:300},(_,i)=>`line ${i}`).join('\n'),'']) {
-        await evaluate("navigator.clipboard.writeText('model-probe clipboard sentinel');document.querySelector('#monaco textarea.inputarea').focus();fixture.events.length=0");
-        const before=await evaluate('(async()=>({clipboard:await fixture.clipboard(),globals:Object.getOwnPropertyNames(window).sort()}))()');
-        const prior=await readModel();
-        await ok(['press','Control+a']);
-        if(value)await ok(['keyboard','inserttext',value]);else await ok(['press','Backspace']);
-        const model=await readModel();
-        const after=await evaluate('(async()=>({clipboard:await fixture.clipboard(),globals:Object.getOwnPropertyNames(window).sort(),oracle:fixture.read("monaco"),events:fixture.events}))()');
-        assert.equal(model.value,value);assert.equal(after.oracle,value);
-        assert.equal(model.uri,prior.uri);
-        assert.deepEqual(after.clipboard,before.clipboard);assert.deepEqual(after.globals,before.globals);
-        assert.ok(after.events.length>0,'native input must produce observed events');
-        assert.ok(after.events.some(e=>e.type==='keydown'&&e.trusted),'trusted keyboard input was not observed');
-        assert.ok(after.events.every(e=>e.trusted));
-        assert.ok(after.events.every(e=>!['copy','paste'].includes(e.type)),'model probe must not use clipboard events');
-        records.push({valueLength:value.length,model,events:after.events,clipboardUnchanged:true,globalsUnchanged:true});
-      }
-      return records;
-    });
-    evidence.editorHandles=result;save();
-    assert.ok(result.modelProbe&&!result.modelProbe.error,JSON.stringify(result.modelProbe));
-    return result;
-  });
+  if(mode==='relay')await checkModelReads({url,ok,evaluate,check,A,worker,evidence,save});
   } finally {launchPermissions?.close();}
 }

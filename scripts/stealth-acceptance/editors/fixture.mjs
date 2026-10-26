@@ -12,7 +12,7 @@ const events = [], errors = [];
 window.fixture = { events, errors, ready: false };
 for (const type of ['beforeinput','input','change','focusout','paste','copy','keydown','keyup']) {
   document.addEventListener(type, event => {
-    const container = event.target.closest('#lexical,#prosemirror,#monaco');
+    const container = event.target.closest('#lexical,#prosemirror,#monaco,#monaco-secondary');
     if (!container) return;
     const record = { editor: container.id, type, trusted: event.isTrusted, key: event.key,
       formats: event.clipboardData ? [...event.clipboardData.types] : [] };
@@ -37,18 +37,23 @@ const prose = new EditorView(document.getElementById('prosemirror'), {
   attributes: { 'aria-label': 'ProseMirror fixture' },
 });
 
-self.MonacoEnvironment = { getWorker: () => new Worker('/editors/editor.worker.js', { type: 'module' }) };
+self.MonacoEnvironment = { getWorker: () => new Worker(new URL('./editor.worker.js',import.meta.url), { type: 'module' }) };
 const code = monaco.editor.create(document.getElementById('monaco'), {
   value: 'old monaco', language: 'plaintext', automaticLayout: true,
   // This audit concerns the existing textarea clipboard fallback. Current
   // Monaco also supports EditContext; that distinct input path is not claimed.
   editContext: false, minimap: { enabled: false },
 });
+const secondary = monaco.editor.create(document.getElementById('monaco-secondary'), {
+  value:'independent secondary model',language:'plaintext',automaticLayout:true,
+  editContext:false,minimap:{enabled:false},
+});
 window.fixture.language = name => monaco.editor.setModelLanguage(code.getModel(), name);
 window.fixture.read = name => {
   if (name === 'lexical') return lexical.getEditorState().read(() => $getRoot().getTextContent());
   if (name === 'prosemirror') return prose.state.doc.textBetween(0, prose.state.doc.content.size, '\n');
   if (name === 'monaco') return code.getValue();
+  if (name === 'monaco-secondary') return secondary.getValue();
   throw Error('unknown fixture');
 };
 const bounded = (promise, step) => Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(Error('clipboard timeout: '+step)), 5000))]);
