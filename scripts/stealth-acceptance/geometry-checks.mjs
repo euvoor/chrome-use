@@ -52,7 +52,17 @@ export async function checkGeometry({mode, ok, cli, evaluate, check, outDir, evi
           if(mode==='relay')await A.evaluate(worker.sid,'stealthCaptureTrace=[]');
           const result=await cli(['screenshot',file,'--annotate']);
           const record={mode,label,transform,nested,dpr,scroll,result};
-          if(mode==='relay')record.trace=await A.evaluate(worker.sid,'stealthCaptureTrace');
+          if(mode==='relay') {
+            record.trace=await A.evaluate(worker.sid,'stealthCaptureTrace');
+            if(!result.success) {
+              // Reads only, recorded separately; never count a remedial retry
+              // as the original capture passing. A raw control isolates the
+              // image capture from the projection/annotation implementation.
+              record.rawControl=await cli(['screenshot',path.join(outDir,`${mode}-raw-${label}-${dpr}.png`)]);
+              const target=record.trace.find(t=>t.method==='Page.captureScreenshot')?.target;
+              if(target) record.viewControl=await A.evaluate(worker.sid,`Promise.race([chrome.debugger.sendCommand(${JSON.stringify(target)},'Page.captureScreenshot',{format:'png',fromSurface:false}).then(r=>({bytes:r.data?.length})).catch(e=>({error:e.message})),new Promise(r=>setTimeout(()=>r({error:'diagnostic timeout'}),5000))])`);
+            }
+          }
           (evidence.geometry??=[]).push(record);save();
           assert.deepEqual(await evaluate('Object.getOwnPropertyNames(window).sort()'),before);
           assert.equal(await evaluate('mutations.length'),0);
