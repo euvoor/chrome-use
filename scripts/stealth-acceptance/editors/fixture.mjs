@@ -49,6 +49,38 @@ const secondary = monaco.editor.create(document.getElementById('monaco-secondary
   editContext:false,minimap:{enabled:false},
 });
 window.fixture.language = name => monaco.editor.setModelLanguage(code.getModel(), name);
+// Owned-fixture controls exercise real focus, model and input changes. The
+// production discovery path never calls these helpers or the oracle below.
+window.fixture.armModelFault = kind => {
+  const input = document.querySelector('#monaco textarea.inputarea');
+  const oldModel = code.getModel(), oldFocus = input.focus;
+  let replacement;
+  const state = window.fixture.modelFault = {kind, fired:false};
+  const listener = event => {
+    if (state.fired || !input.contains(event.target)) return;
+    if (kind === 'swap' && event.type === 'keydown' && event.key.toLowerCase() === 'a') {
+      state.fired = true;
+      replacement = monaco.editor.createModel('replacement model');
+      code.setModel(replacement);
+    }
+    if (kind === 'reject' && event.type === 'beforeinput') {
+      state.fired = true; event.preventDefault(); event.stopImmediatePropagation();
+    }
+    if (kind === 'concurrent' && event.type === 'beforeinput') {
+      state.fired = true;
+      state.pending = Object.getPrototypeOf(navigator.clipboard).writeText.call(navigator.clipboard, 'new concurrent clipboard');
+    }
+  };
+  if (kind === 'focus') input.focus = () => {state.fired=true;secondary.focus();};
+  document.addEventListener('keydown', listener, true);
+  document.addEventListener('beforeinput', listener, true);
+  window.fixture.clearModelFault = () => {
+    document.removeEventListener('keydown', listener, true);
+    document.removeEventListener('beforeinput', listener, true);
+    input.focus = oldFocus;
+    if (replacement) {code.setModel(oldModel);replacement.dispose();}
+  };
+};
 window.fixture.read = name => {
   if (name === 'lexical') return lexical.getEditorState().read(() => $getRoot().getTextContent());
   if (name === 'prosemirror') return prose.state.doc.textBetween(0, prose.state.doc.content.size, '\n');
