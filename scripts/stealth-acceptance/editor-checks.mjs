@@ -250,6 +250,7 @@ export async function checkEditors({mode,profile,url,ok,cli,evaluate,check,brows
       return records;
     });
     evidence.editorHandles=result;save();
+    assert.ok(result.modelProbe&&!result.modelProbe.error,JSON.stringify(result.modelProbe));
     return result;
   });
   } finally {launchPermissions?.close();}
