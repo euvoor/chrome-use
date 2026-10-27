@@ -14,6 +14,7 @@ for(const type of ['keydown','keyup','beforeinput','input','copy','paste'])docum
   if(fault==='swap'){fired=true;editors[0].setModel(api.createModel('replacement model','plaintext'));}
   if(fault==='concurrent'){fired=true;pending=proto.writeText.call(navigator.clipboard,'new concurrent clipboard');}
  }
+ if(fault==='selection'&&type==='keyup'&&e.key.toLowerCase()==='a'){fired=true;editors[0].setSelection({startLineNumber:1,startColumn:1,endLineNumber:1,endColumn:1});}
  if(fault==='reject'&&type==='beforeinput'&&e.inputType==='insertText'){fired=true;e.preventDefault();}
 },true);
 window.fixture={ready:true,url:location.href,read:i=>editors[i].getValue(),events,calls,arm(kind){fault=kind;fired=false;},state:()=>({fired,pending}),settle:()=>pending,

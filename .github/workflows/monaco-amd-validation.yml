@@ -30,17 +30,26 @@ jobs:
           mkdir -p ../../stealth-evidence
           cp pnpm-lock.yaml ../../stealth-evidence/amd-pnpm-lock.yaml
           node build.mjs
-      - name: Reuse the already-tested binary for fixture diagnostics
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: cli
+          shared-key: linux-ci
+          cache-on-failure: true
+      - name: Format and test production discovery
         run: |
-          gh run download 40489386934 --repo euvoor/chrome-use --name monaco-amd-1453de28f9dce81b2d08aab7c7243b350113e0d9 --dir "$RUNNER_TEMP/tested-amd"
-          cd "$RUNNER_TEMP/tested-amd"
-          sha256sum -c stealth-evidence/binaries.sha256
-          mkdir -p "$GITHUB_WORKSPACE/cli/target/ci"
-          cp cli/target/ci/chrome-use "$GITHUB_WORKSPACE/cli/target/ci/chrome-use"
-          chmod +x "$GITHUB_WORKSPACE/cli/target/ci/chrome-use"
-          cp stealth-evidence/binaries.sha256 "$GITHUB_WORKSPACE/stealth-evidence/binaries.sha256"
+          mkdir -p stealth-evidence
+          cargo fmt --manifest-path cli/Cargo.toml -- --check
+          git diff > stealth-evidence/format.patch
+          cargo test --locked --profile ci --bin chrome-use --manifest-path cli/Cargo.toml native::monaco_model
+          cargo clippy --locked --profile ci --bin chrome-use --manifest-path cli/Cargo.toml -- -D warnings
+          node --test scripts/monaco-model.test.js scripts/monaco-clipboard.test.js
+      - name: Build production fix
+        run: |
+          cargo build --locked --profile ci --manifest-path cli/Cargo.toml
+          sha256sum cli/target/ci/chrome-use > stealth-evidence/binaries.sha256
       - name: Prepare virtual display and Chrome sandbox support
         run: |
           sudo apt-get update
