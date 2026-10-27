@@ -1,0 +1,22 @@
+<!doctype html><meta charset="utf-8"><div id="one" style="width:700px;height:300px"></div><div id="two" style="width:700px;height:300px"></div>
+<script>window.fixtureErrors=[];window.addEventListener('error',e=>fixtureErrors.push(e.message));</script>
+<script src="/vs/loader.js"></script><script>
+require.config({paths:{vs:'/vs'}});require(['vs/editor/editor.main'],function(){
+const api=monaco.editor;
+const editors=['one','two'].map((id,i)=>api.create(document.getElementById(id),{value:i?'second':'first',language:'plaintext',editContext:false,autoIndent:'none',formatOnType:false,minimap:{enabled:false}}));
+const calls=[],events=[];let fault='',fired=false,pending=Promise.resolve();
+const proto=Object.getPrototypeOf(navigator.clipboard);
+for(const name of ['read','write','readText','writeText'])navigator.clipboard[name]=function(...args){calls.push(name);return proto[name].apply(this,args);};
+for(const type of ['keydown','keyup','beforeinput','input','copy','paste'])document.addEventListener(type,e=>{
+ events.push({type,trusted:e.isTrusted,key:e.key});
+ if(!fired&&type==='keydown'&&e.key.toLowerCase()==='a'&&(e.ctrlKey||e.metaKey)){
+  if(fault==='focus'){fired=true;editors[1].focus();}
+  if(fault==='swap'){fired=true;editors[0].setModel(api.createModel('replacement model','plaintext'));}
+  if(fault==='concurrent'){fired=true;pending=proto.writeText.call(navigator.clipboard,'new concurrent clipboard');}
+ }
+ if(fault==='reject'&&type==='beforeinput'&&e.inputType==='insertText'){fired=true;e.preventDefault();}
+},true);
+window.fixture={ready:true,read:i=>editors[i].getValue(),events,calls,arm(kind){fault=kind;fired=false;},state:()=>({fired,pending}),settle:()=>pending,
+ seed:text=>proto.writeText.call(navigator.clipboard,text),clipboard:()=>proto.readText.call(navigator.clipboard)};
+window.monaco=undefined;window.require=undefined;window.define=undefined;delete window.monaco;delete window.require;delete window.define;
+});</script>
