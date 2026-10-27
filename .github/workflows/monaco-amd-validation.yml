@@ -22,6 +22,13 @@ jobs:
         with:
           version: 11.1.3
           run_install: false
+      - name: Prepare pinned AMD package without install scripts
+        working-directory: scripts/amd-validation
+        run: |
+          pnpm install --ignore-scripts --frozen-lockfile
+          mkdir -p ../../stealth-evidence
+          cp pnpm-lock.yaml ../../stealth-evidence/amd-pnpm-lock.yaml
+          node build.mjs
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
@@ -38,21 +45,10 @@ jobs:
           cargo test --locked --profile ci --bin chrome-use --manifest-path cli/Cargo.toml native::monaco_model
           cargo clippy --locked --profile ci --bin chrome-use --manifest-path cli/Cargo.toml -- -D warnings
           node --test scripts/monaco-model.test.js scripts/monaco-clipboard.test.js
-      - name: Build baseline discovery and production fix
+      - name: Build production fix
         run: |
-          cp cli/src/native/monaco_model.rs "$RUNNER_TEMP/monaco_model.rs"
-          cp cli/src/native/monaco_model.js "$RUNNER_TEMP/monaco_model.js"
-          cp cli/src/native/monaco_model_tests.rs "$RUNNER_TEMP/monaco_model_tests.rs"
-          for file in monaco_model.rs monaco_model.js monaco_model_tests.rs; do
-            git show 7f2d551caea482203eb6d065a40374f40d212cb8:cli/src/native/$file > cli/src/native/$file
-          done
           cargo build --locked --profile ci --manifest-path cli/Cargo.toml
-          cp cli/target/ci/chrome-use "$RUNNER_TEMP/chrome-use-baseline"
-          cp "$RUNNER_TEMP/monaco_model.rs" cli/src/native/monaco_model.rs
-          cp "$RUNNER_TEMP/monaco_model.js" cli/src/native/monaco_model.js
-          cp "$RUNNER_TEMP/monaco_model_tests.rs" cli/src/native/monaco_model_tests.rs
-          cargo build --locked --profile ci --manifest-path cli/Cargo.toml
-          sha256sum cli/target/ci/chrome-use "$RUNNER_TEMP/chrome-use-baseline" > stealth-evidence/binaries.sha256
+          sha256sum cli/target/ci/chrome-use > stealth-evidence/binaries.sha256
       - name: Prepare virtual display and Chrome sandbox support
         run: |
           sudo apt-get update
@@ -90,16 +86,14 @@ jobs:
           (evidence / 'browser-download.json').write_text(json.dumps({'version': stable['version'], 'url': url, 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest()}, indent=2))
           with open(os.environ['GITHUB_ENV'], 'a') as output:
               output.write(f'CHROME={chrome}\n')
-      - name: Prepare pinned AMD package without install scripts
-        working-directory: scripts/amd-validation
-        run: |
-          pnpm install --ignore-scripts --no-frozen-lockfile
-          cp pnpm-lock.yaml ../../stealth-evidence/amd-pnpm-lock.yaml
-          node build.mjs
       - name: Probe owned fixture with Chrome sandbox enabled
+        env:
+          SKIP_BASELINE: '1'
         run: xvfb-run -a -s '-screen 0 1440x1000x24' node scripts/amd-validation/acceptance.mjs
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
           name: monaco-amd-${{ github.sha }}
-          path: stealth-evidence
+          path: |
+            stealth-evidence
+            cli/target/ci/chrome-use
