@@ -16,7 +16,7 @@ require.config({paths:{vs:'/vs'}});require(['vs/editor/editor.main'],function(){
 const one=monaco.editor.create(document.getElementById('one'),{value:'first',language:'plaintext',editContext:false});
 const two=monaco.editor.create(document.getElementById('two'),{value:'second',language:'plaintext',editContext:false});
 window.fixtureRead=()=>[one.getValue(),two.getValue()];
-delete window.monaco;delete window.require;delete window.define;window.fixtureReady=true;
+window.monaco=undefined;window.require=undefined;window.define=undefined;delete window.monaco;delete window.require;delete window.define;window.fixtureReady=true;
 });</script>`;
 const server=http.createServer((req,res)=>{const f=path.resolve(base,'.'+new URL(req.url,'http://localhost').pathname);if(req.url==='/'){res.setHeader('Content-Type','text/html');res.end(html);}else if(f.startsWith(base+'/')&&fs.existsSync(f)&&fs.statSync(f).isFile()){res.setHeader('Content-Type',f.endsWith('.css')?'text/css':f.endsWith('.js')?'application/javascript':'application/octet-stream');fs.createReadStream(f).pipe(res);}else{res.writeHead(404);res.end();}});
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
