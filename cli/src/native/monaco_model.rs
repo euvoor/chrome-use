@@ -155,11 +155,18 @@ async fn access_in_group(
                         .pointer("/preview/properties")
                         .and_then(Value::as_array)
                         .is_some_and(|properties| {
-                            properties.iter().any(|p| p["name"] == *name && p["type"] == "function")
+                            properties
+                                .iter()
+                                .any(|p| p["name"] == *name && p["type"] == "function")
                         })
                 });
             let numeric = name.parse::<usize>().is_ok();
-            if namespace || loader || manager || numeric || matches!(name, "editor" | "monaco" | "api") {
+            if namespace
+                || loader
+                || manager
+                || numeric
+                || matches!(name, "editor" | "monaco" | "api")
+            {
                 // V8's synthetic scope mirrors are not namespace objects and
                 // cannot be called as one. Their descriptor values can be.
                 let is_scope = numeric
@@ -206,10 +213,12 @@ fn enqueue(
 // execute a module factory. The page payload checks completion and module ID.
 fn has_amd_modules(descriptors: &[Value]) -> bool {
     descriptors.iter().any(|p| {
-        p["name"] == "_modules2" && p.pointer("/value/subtype").and_then(Value::as_str) == Some("array")
+        p["name"] == "_modules2"
+            && p.pointer("/value/subtype").and_then(Value::as_str) == Some("array")
     }) && ["_defineFunc", "_requireFunc"].iter().all(|name| {
         descriptors.iter().any(|p| {
-            p["name"] == *name && p.pointer("/value/type").and_then(Value::as_str) == Some("function")
+            p["name"] == *name
+                && p.pointer("/value/type").and_then(Value::as_str) == Some("function")
         })
     })
 }

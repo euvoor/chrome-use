@@ -174,13 +174,27 @@ async fn amd_loader_discovery_uses_completed_exports_within_existing_budget() {
     for value in [None, Some("expected")] {
         let (result, commands) = exercise("amd", value).await;
         assert_eq!(result.unwrap().as_deref(), Some("expected"));
-        assert!(commands.iter().filter(|c| c["method"] == "Runtime.getProperties").count() <= MAX_OBJECTS);
-        assert_eq!(commands.iter().filter(|c| c["method"] == "Input.insertText").count(), usize::from(value.is_some()));
+        assert!(
+            commands
+                .iter()
+                .filter(|c| c["method"] == "Runtime.getProperties")
+                .count()
+                <= MAX_OBJECTS
+        );
+        assert_eq!(
+            commands
+                .iter()
+                .filter(|c| c["method"] == "Input.insertText")
+                .count(),
+            usize::from(value.is_some())
+        );
         assert_cleanup(&commands);
     }
     let (result, commands) = exercise("amd-missing", Some("expected")).await;
     assert_eq!(result.unwrap(), None);
-    assert!(commands.iter().all(|c| !c["method"].as_str().unwrap().starts_with("Input.")));
+    assert!(commands
+        .iter()
+        .all(|c| !c["method"].as_str().unwrap().starts_with("Input.")));
     assert_cleanup(&commands);
 }
 

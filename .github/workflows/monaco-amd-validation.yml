@@ -33,9 +33,10 @@ jobs:
       - name: Format and test production discovery
         run: |
           mkdir -p stealth-evidence
-          cargo fmt --manifest-path cli/Cargo.toml
+          cargo fmt --manifest-path cli/Cargo.toml -- --check
           git diff > stealth-evidence/format.patch
           cargo test --locked --profile ci --bin chrome-use --manifest-path cli/Cargo.toml native::monaco_model
+          cargo clippy --locked --profile ci --bin chrome-use --manifest-path cli/Cargo.toml -- -D warnings
           node --test scripts/monaco-model.test.js scripts/monaco-clipboard.test.js
       - name: Build baseline discovery and production fix
         run: |
@@ -91,7 +92,10 @@ jobs:
               output.write(f'CHROME={chrome}\n')
       - name: Prepare pinned AMD package without install scripts
         working-directory: scripts/amd-validation
-        run: pnpm install --ignore-scripts --no-frozen-lockfile
+        run: |
+          pnpm install --ignore-scripts --no-frozen-lockfile
+          cp pnpm-lock.yaml ../../stealth-evidence/amd-pnpm-lock.yaml
+          node build.mjs
       - name: Probe owned fixture with Chrome sandbox enabled
         run: xvfb-run -a -s '-screen 0 1440x1000x24' node scripts/amd-validation/acceptance.mjs
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

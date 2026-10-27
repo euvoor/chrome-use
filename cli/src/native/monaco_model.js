@@ -7,7 +7,7 @@ function (input, amd = false) {
     if (amd) {
         // Read only completed AMD data records. Never call the loader, a
         // module factory or an accessor, and never scan page globals. The
-        // bounded table walk also works when the loader's ID is minified.
+        // bounded table walk also works when the loader binding is minified.
         const own = (object, key) => object && Object.getOwnPropertyDescriptor(object, key)?.value;
         const modules = own(api, '_modules2');
         const length = own(modules, 'length');
