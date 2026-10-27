@@ -24,7 +24,7 @@ async function run(mode){
  const env={PATH:process.env.PATH,DISPLAY:process.env.DISPLAY,XAUTHORITY:process.env.XAUTHORITY||'',LANG:'en_US.UTF-8',HOME:home,TMPDIR:process.env.RUNNER_TEMP,CHROME_USE_RELAY_DIR:path.join(home,'relay'),AGENT_BROWSER_SOCKET_DIR:sockets,AGENT_BROWSER_EXECUTABLE_PATH:process.env.CHROME,AGENT_BROWSER_NO_UPDATE_CHECK:'1',CHROME_USE_NO_UPDATE_CHECK:'1',AGENT_BROWSER_NO_AUTO_OPEN:'1',AGENT_BROWSER_NO_AUTO_RECONNECT:'1',NO_COLOR:'1'};
  const relay=mode==='relay',extension=path.resolve('extensions/ab-connect'),extId='ciiljdlhdpfckdcfkphgmfalanpdejep';
  if(relay){const quote=s=>"'"+s.replaceAll("'","'\\''")+"'",wrapper=path.join(dir,'host.sh');fs.writeFileSync(wrapper,`#!/bin/sh\nexec /usr/bin/env -i ${Object.entries(env).map(([k,v])=>`${k}=${quote(v)}`).join(' ')} ${quote(bin)} __nm-host "$@"\n`,{mode:0o700});fs.mkdirSync(path.join(profile,'NativeMessagingHosts'),{recursive:true});fs.writeFileSync(path.join(profile,'NativeMessagingHosts/com.agent_browser.connect.json'),JSON.stringify({name:'com.agent_browser.connect',description:'owned AMD validation',path:wrapper,type:'stdio',allowed_origins:[`chrome-extension://${extId}/`]}));}
- let b;
+ let b, navigation=0;
  const cli=async args=>{let r;try{r=await execute(bin,['--session','amd-'+mode,'--json',...(!relay?['--cdp','http://127.0.0.1:9471']:[]),...args],{env,timeout:65000,maxBuffer:16*1024*1024});}catch(e){r=e;}for(const line of String(r.stdout||'').trim().split('\n').reverse()){try{return JSON.parse(line);}catch{}}throw Error(`CLI no JSON: ${r.stderr||r.message}`);};
  const ok=async args=>{const r=await cli(args);assert.equal(r.success,true,JSON.stringify(r));return r.data;};
  const evaluate=async expr=>{const d=await ok(['eval',expr]);return d&&Object.hasOwn(d,'result')?d.result:d;};
@@ -33,9 +33,9 @@ async function run(mode){
  if(relay){const w=await A.worker();await waitFor(()=>A.evaluate(w.sid,"typeof chrome!=='undefined'&&!!chrome.storage?.local"));await A.evaluate(w.sid,'chrome.storage.local.set({ab_stealth:true,ab_cursor:true})');await waitFor(()=>fs.existsSync(path.join(env.CHROME_USE_RELAY_DIR,'relay-cdp-url')),{timeout:30000});evidence.stealth=await A.evaluate(w.sid,"chrome.storage.local.get(['ab_stealth','ab_cursor'])");}
  evidence.modes.push({mode,browser:b.version});save();
  await b.send('Browser.grantPermissions',{origin:url.slice(0,-1),permissions:['clipboardReadWrite','clipboardSanitizedWrite']});
- const open=async(variant='amd')=>{const targetUrl=url+(variant==='esm'?'?esm':'');await ok(['open',targetUrl]);await waitFor(()=>evaluate('!!window.fixture?.ready'),{timeout:30000});const target=(await A.targets()).find(t=>t.type==='page'&&t.url===targetUrl);await b.send('Target.activateTarget',{targetId:target.targetId});await waitFor(()=>evaluate('document.hasFocus()'));assert.deepEqual(await evaluate('[typeof monaco,typeof require,typeof define]'),['undefined','undefined','undefined']);};
- await open();
+ const open=async(variant='amd')=>{const targetUrl=url+'?variant='+variant+'&navigation='+(++navigation);await ok(['open',targetUrl]);await waitFor(()=>evaluate(`window.fixture?.url===${JSON.stringify(targetUrl)}`),{timeout:30000});const target=(await A.targets()).find(t=>t.type==='page'&&t.url===targetUrl);await b.send('Target.activateTarget',{targetId:target.targetId});await waitFor(()=>evaluate('document.hasFocus()'));evidence.checks.push({mode,navigation,targetUrl,targets:await A.targets(),observed:await evaluate('({url:location.href,fixtureUrl:fixture.url,focus:document.hasFocus(),visibility:document.visibilityState})')});save();assert.deepEqual(await evaluate('[typeof monaco,typeof require,typeof define]'),['undefined','undefined','undefined']);};
  if(mode==='baseline'){
+  await open();
   await evaluate("fixture.seed('baseline sentinel')");const response=await cli(['fill','#one','baseline AMD input']);evidence.baseline={response,observed:await evaluate('fixture.read(0)')};save();assert.notEqual(response.data?.engine,'monaco-native','baseline must reproduce the discovery gap');return;
  }
  for(const variant of ['amd','esm']){
@@ -54,4 +54,4 @@ async function run(mode){
  }
  }finally{await cli(['close']).catch(()=>{});if(b)await b.close();}
 }
-try{for(const mode of process.env.SKIP_BASELINE==='1'?['cdp','relay']:['baseline','cdp','relay'])await run(mode);evidence.passed=true;save();console.log('AMD baseline and',evidence.checks.length,'production controls passed');}catch(error){evidence.error=String(error.stack||error);save();throw error;}finally{server.close();fs.rmSync(root,{recursive:true,force:true});}
+try{for(const mode of process.env.SKIP_BASELINE==='1'?['cdp','relay']:['baseline','cdp','relay'])await run(mode);evidence.passed=true;save();console.log('Browser acceptance passed:',evidence.checks.length,'records');}catch(error){evidence.error=String(error.stack||error);save();throw error;}finally{server.close();fs.rmSync(root,{recursive:true,force:true});}

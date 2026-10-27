@@ -16,7 +16,7 @@ for(const type of ['keydown','keyup','beforeinput','input','copy','paste'])docum
  }
  if(fault==='reject'&&type==='beforeinput'&&e.inputType==='insertText'){fired=true;e.preventDefault();}
 },true);
-window.fixture={ready:true,read:i=>editors[i].getValue(),events,calls,arm(kind){fault=kind;fired=false;},state:()=>({fired,pending}),settle:()=>pending,
+window.fixture={ready:true,url:location.href,read:i=>editors[i].getValue(),events,calls,arm(kind){fault=kind;fired=false;},state:()=>({fired,pending}),settle:()=>pending,
  seed:text=>proto.writeText.call(navigator.clipboard,text),clipboard:()=>proto.readText.call(navigator.clipboard)};
 window.monaco=undefined;window.require=undefined;window.define=undefined;delete window.monaco;delete window.require;delete window.define;
 });</script>
