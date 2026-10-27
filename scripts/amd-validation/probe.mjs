@@ -10,7 +10,8 @@ assert.equal(process.env.RUNNER_ENVIRONMENT,'github-hosted');
 assert.ok(process.env.DISPLAY);assert.notEqual(process.getuid(),0);
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'amd-probe-'));
 const base=path.resolve('scripts/amd-validation/node_modules/monaco-editor/min');
-const html=`<!doctype html><div id="one" style="width:700px;height:300px"></div><div id="two" style="width:700px;height:300px"></div><script src="/vs/loader.js"></script><script>
+assert.ok(fs.existsSync(path.join(base,'vs/loader.js')),'pinned AMD package must exist');
+const html=`<!doctype html><div id="one" style="width:700px;height:300px"></div><div id="two" style="width:700px;height:300px"></div><script>window.fixtureErrors=[];window.addEventListener("error",e=>fixtureErrors.push(e.message));</script><script src="/vs/loader.js"></script><script>
 require.config({paths:{vs:'/vs'}});require(['vs/editor/editor.main'],function(){
 const one=monaco.editor.create(document.getElementById('one'),{value:'first',language:'plaintext',editContext:false});
 const two=monaco.editor.create(document.getElementById('two'),{value:'second',language:'plaintext',editContext:false});
@@ -23,7 +24,7 @@ let b;
 try{
  b=await startChrome(path.join(dir,'profile'),{PATH:process.env.PATH,HOME:dir,DISPLAY:process.env.DISPLAY,XAUTHORITY:process.env.XAUTHORITY||'',LANG:'en_US.UTF-8'},[]);
  const A=api(b);const {targetId}=await b.send('Target.createTarget',{url:`http://127.0.0.1:${server.address().port}/`});const sid=await A.attach(targetId);
- await waitFor(()=>A.evaluate(sid,'window.fixtureReady===true'),{timeout:30000});
+ try { await waitFor(()=>A.evaluate(sid,'window.fixtureReady===true'),{timeout:30000}); } catch(error) { console.log(await A.evaluate(sid,'({errors:window.fixtureErrors,html:document.body.innerHTML})'));throw error; }
  assert.deepEqual(await A.evaluate(sid,'[typeof monaco,typeof require,typeof define]'),['undefined','undefined','undefined']);
  const send=(m,p)=>b.send(m,p,sid);
  const input=(await send('Runtime.evaluate',{expression:"document.querySelector('#one textarea.inputarea')",objectGroup:'probe'})).result.objectId;
