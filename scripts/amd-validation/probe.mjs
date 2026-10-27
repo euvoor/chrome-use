@@ -31,10 +31,10 @@ try{
  const ls=await send('DOMDebugger.getEventListeners',{objectId:input});
  fs.writeFileSync('stealth-evidence/listeners.json',JSON.stringify(ls,null,2));
  const queue=[],seen=new Set(),results=[];
- function add(v,p,d){if(!v?.objectId||seen.has(v.objectId)||seen.size>3000||v.subtype==='node'||v.description==='Global'||v.description==='Window')return;seen.add(v.objectId);queue.push({v,p,d});}
- for(const l of ls.listeners.filter(x=>['copy','input','keydown'].includes(x.type)))add(l.originalHandler||l.handler,l.type,0);
- while(queue.length&&results.length<650){const {v,p,d}=queue.shift();const props=await send('Runtime.getProperties',{objectId:v.objectId,ownProperties:true,generatePreview:true});results.push({path:p,depth:d,object:v,...props});if(d>=12)continue;
- for(const t of props.internalProperties||[])if(['[[Scopes]]','[[TargetFunction]]','[[BoundThis]]','[[Prototype]]'].includes(t.name))add(t.value,p+'.'+t.name,d+1);
+ function add(v,p,d){if(!v?.objectId||seen.has(v.objectId)||seen.size>10000||v.subtype==='node'||v.description==='Global'||v.description==='Window'||v.description?.includes('[native code]'))return;seen.add(v.objectId);if(p.includes('globalDefine'))queue.unshift({v,p,d});else queue.push({v,p,d});}
+ for(const l of ls.listeners.filter(x=>x.type==='copy'))add(l.originalHandler||l.handler,l.type,0);
+ while(queue.length&&results.length<1000){const {v,p,d}=queue.shift();const props=await send('Runtime.getProperties',{objectId:v.objectId,ownProperties:true,generatePreview:true});results.push({path:p,depth:d,object:v,...props});if(d>=12)continue;
+ for(const t of props.internalProperties||[])if(['[[Scopes]]','[[TargetFunction]]','[[BoundThis]]'].includes(t.name))add(t.value,p+'.'+t.name,d+1);
  for(const t of props.result||[]){if(t.name==='__proto__'||['window','document','globalThis'].includes(t.name))continue;add(t.value,p+'.'+t.name,d+1);}
  }
  fs.writeFileSync('stealth-evidence/graph.json',JSON.stringify({browser:b.version,objects:results},null,2));
