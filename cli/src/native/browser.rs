@@ -2805,6 +2805,11 @@ pub(crate) fn diagnose_relay_timeout(error: &str, probe: &TabProbe) -> String {
 
 /// Converts common error messages into AI-friendly, actionable descriptions.
 pub fn to_ai_friendly_error(error: &str) -> String {
+    // Keep domain preflight's no-navigation instruction and original cause.
+    // The CLI also uses this prefix to suppress fallback adapter execution.
+    if error.starts_with("site_domain_unverified:") {
+        return error.to_string();
+    }
     // A first-tab refusal (#486) already says what happened to the tab and
     // what to do; it quotes causes ("no attached tab", "timed out") that the
     // rewrites below would turn into unrelated advice.
