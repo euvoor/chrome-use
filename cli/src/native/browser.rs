@@ -2808,6 +2808,14 @@ pub fn to_ai_friendly_error(error: &str) -> String {
     // Keep domain preflight's no-navigation instruction and original cause.
     // The CLI also uses this prefix to suppress fallback adapter execution.
     if error.starts_with("site_domain_unverified:") {
+        if is_stale_target_error(error) && !error.contains("`tab list`") {
+            return format!(
+                "{error}\nRun `tab list` first. If the intended tab is listed as `created` or \
+                 `adopted`, select it with `tab select <ref>`; otherwise use `tab adopt \
+                 <handle>` only for a tab you are authorized to use. Verify `get url` and \
+                 `snapshot` before retrying the site command."
+            );
+        }
         return error.to_string();
     }
     // A first-tab refusal (#486) already says what happened to the tab and
