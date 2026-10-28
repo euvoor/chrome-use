@@ -180,6 +180,8 @@ async fn transient_world_setup_failure_recovers_without_navigation() {
     for method in ["Page.getFrameTree", "Page.createIsolatedWorld"] {
         let session = uuid::Uuid::new_v4().to_string();
         let (client, server) = fixture(session.clone(), 90).await;
+        let start = std::time::Instant::now();
+        client.quiet_worlds.set_time_for_test(start);
         client
             .send_command(
                 "Test.failNext",
@@ -208,7 +210,25 @@ async fn transient_world_setup_failure_recovers_without_navigation() {
             "back-to-back reads must not repeatedly attempt failed setup"
         );
 
-        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        for elapsed in [500, 999] {
+            client
+                .quiet_worlds
+                .set_time_for_test(start + std::time::Duration::from_millis(elapsed));
+            assert!(refused_read(&client, &session)
+                .await
+                .contains("no isolated world on this target"));
+            assert_eq!(
+                client
+                    .send_command("Test.stats", None, Some(&session))
+                    .await
+                    .unwrap(),
+                before,
+                "setup must stay cached until the full retry interval expires"
+            );
+        }
+        client
+            .quiet_worlds
+            .set_time_for_test(start + std::time::Duration::from_secs(1));
         assert_eq!(read(&client, &session).await, "current-0");
         assert_eq!(read(&client, &session).await, "current-0");
         let after = client
@@ -228,6 +248,8 @@ async fn transient_world_setup_failure_recovers_without_navigation() {
 async fn persistent_world_setup_failure_still_refuses_after_retry() {
     let session = uuid::Uuid::new_v4().to_string();
     let (client, server) = fixture(session.clone(), 100).await;
+    let start = std::time::Instant::now();
+    client.quiet_worlds.set_time_for_test(start);
     client
         .send_command("Test.refuseWorld", None, Some(&session))
         .await
@@ -235,7 +257,9 @@ async fn persistent_world_setup_failure_still_refuses_after_retry() {
     assert!(refused_read(&client, &session)
         .await
         .contains("No frame for given id"));
-    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    client
+        .quiet_worlds
+        .set_time_for_test(start + std::time::Duration::from_secs(1));
     let error = refused_read(&client, &session).await;
     assert!(error.contains("isolation_unavailable"), "{error}");
     assert!(error.contains("No frame for given id"), "{error}");

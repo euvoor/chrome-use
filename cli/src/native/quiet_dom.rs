@@ -31,6 +31,18 @@ pub(crate) struct WorldCache(Mutex<WorldCacheState>);
 struct WorldCacheState {
     next_generation: u64,
     worlds: HashMap<String, WorldEntry>,
+    #[cfg(test)]
+    now: Option<Instant>,
+}
+
+impl WorldCacheState {
+    fn now(&self) -> Instant {
+        #[cfg(test)]
+        if let Some(now) = self.now {
+            return now;
+        }
+        Instant::now()
+    }
 }
 
 struct WorldEntry {
@@ -44,13 +56,17 @@ struct WorldEntry {
 const WORLD_RETRY_DELAY: Duration = Duration::from_secs(1);
 
 impl WorldCache {
+    /// Freeze this transport's cache clock without affecting CDP timeout timers.
+    #[cfg(test)]
+    pub(crate) fn set_time_for_test(&self, now: Instant) {
+        self.0.lock().unwrap().now = Some(now);
+    }
+
     fn cached(&self, session: &str) -> (u64, Option<Option<i64>>) {
         let mut state = self.0.lock().unwrap();
+        let now = state.now();
         if let Some(entry) = state.worlds.get_mut(session) {
-            if entry
-                .retry_after
-                .is_some_and(|after| Instant::now() >= after)
-            {
+            if entry.retry_after.is_some_and(|after| now >= after) {
                 entry.context = None;
                 entry.retry_after = None;
             }
@@ -71,6 +87,7 @@ impl WorldCache {
 
     fn store(&self, session: &str, generation: u64, context: Option<i64>) -> bool {
         let mut state = self.0.lock().unwrap();
+        let now = state.now();
         let Some(entry) = state.worlds.get_mut(session) else {
             return false;
         };
@@ -78,9 +95,7 @@ impl WorldCache {
             return false;
         }
         entry.context = Some(context);
-        entry.retry_after = context
-            .is_none()
-            .then(|| Instant::now() + WORLD_RETRY_DELAY);
+        entry.retry_after = context.is_none().then(|| now + WORLD_RETRY_DELAY);
         true
     }
 
