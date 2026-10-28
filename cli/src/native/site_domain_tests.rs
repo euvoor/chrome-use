@@ -59,7 +59,11 @@ async fn run_site(current: Result<&str, &str>) -> (Result<Value, String>, Vec<Va
         target_type: "page".into(),
     };
     let mut state = DaemonState::new();
-    state.browser = Some(BrowserManager::for_test(&url, vec![page]).await);
+    let mut browser = BrowserManager::for_test(&url, vec![page]).await;
+    // for_test pins the page but intentionally grants no tab ownership.
+    browser.reown_target("target").unwrap();
+    assert_eq!(browser.active_session_id().unwrap(), "session");
+    state.browser = Some(browser);
     let result = handle_site(
         &json!({"domain":"example.test","script":ADAPTER}),
         &mut state,
